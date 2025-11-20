@@ -15,180 +15,384 @@ import (
 	_ "github.com/strukturag/libheif/go/heif"
 )
 
-func colorModelName(cm color.Model) string {
+type ColorModel int
+
+const (
+	ColorModelUnknown ColorModel = iota
+	ColorModelRGB
+	ColorModelYCbCr
+	ColorModelGrayscale
+	ColorModelIndexed
+)
+
+func (cm ColorModel) String() string {
 	switch cm {
-	case color.RGBAModel:
-		return "RGBA"
-	case color.RGBA64Model:
-		return "RGBA64"
-	case color.NRGBAModel:
-		return "NRGBA"
-	case color.NRGBA64Model:
-		return "NRGBA64"
-	case color.AlphaModel:
-		return "Alpha"
-	case color.Alpha16Model:
-		return "Alpha16"
-	case color.GrayModel:
-		return "Gray"
-	case color.Gray16Model:
-		return "Gray16"
-	case color.YCbCrModel:
+	case ColorModelRGB:
+		return "RGB"
+	case ColorModelYCbCr:
 		return "YCbCr"
-	case color.CMYKModel:
-		return "CMYK"
+	case ColorModelGrayscale:
+		return "Grayscale"
+	case ColorModelIndexed:
+		return "Indexed"
 	default:
-		if _, ok := cm.(color.Palette); ok {
-			return "Paletted"
-		}
 		return "Unknown"
 	}
 }
 
-func estimateDecodedSize(filename string) (int64, error) {
+type ColorSpace int
+
+const (
+	ColorSpaceUnknown ColorSpace = iota
+	ColorSpaceSRGB
+	ColorSpaceAdobeRGB
+	ColorSpaceBT709
+	ColorSpaceBT2020
+	ColorSpaceDisplayP3
+)
+
+func (cs ColorSpace) String() string {
+	switch cs {
+	case ColorSpaceSRGB:
+		return "sRGB"
+	case ColorSpaceAdobeRGB:
+		return "Adobe RGB"
+	case ColorSpaceBT709:
+		return "BT.709"
+	case ColorSpaceBT2020:
+		return "BT.2020"
+	case ColorSpaceDisplayP3:
+		return "Display P3"
+	default:
+		return "Unknown"
+	}
+}
+
+type HDRType int
+
+const (
+	HDRNone HDRType = iota
+	HDRPQ
+	HDRHLG
+	HDRLimited
+)
+
+func (h HDRType) String() string {
+	switch h {
+	case HDRPQ:
+		return "PQ (SMPTE ST 2084)"
+	case HDRHLG:
+		return "HLG (ARIB STD-B67)"
+	case HDRLimited:
+		return "Limited"
+	case HDRNone:
+		return "None"
+	default:
+		return "Unknown"
+	}
+}
+
+type ChromaSubsampling int
+
+const (
+	ChromaSubsamplingNA ChromaSubsampling = iota
+	ChromaSubsampling444
+	ChromaSubsampling422
+	ChromaSubsampling420
+	ChromaSubsamplingUnknown
+)
+
+func (cs ChromaSubsampling) String() string {
+	switch cs {
+	case ChromaSubsampling444:
+		return "4:4:4"
+	case ChromaSubsampling422:
+		return "4:2:2"
+	case ChromaSubsampling420:
+		return "4:2:0"
+	case ChromaSubsamplingNA:
+		return "N/A"
+	default:
+		return "Unknown"
+	}
+}
+
+type CompressionType int
+
+const (
+	CompressionUnknown CompressionType = iota
+	CompressionLossless
+	CompressionLossy
+	CompressionHybrid
+)
+
+func (ct CompressionType) String() string {
+	switch ct {
+	case CompressionLossless:
+		return "Lossless"
+	case CompressionLossy:
+		return "Lossy"
+	case CompressionHybrid:
+		return "Lossy/Lossless"
+	default:
+		return "Unknown"
+	}
+}
+
+type ImageInfo struct {
+	Format            string
+	Width             int
+	Height            int
+	ColorModel        ColorModel
+	ColorSpace        ColorSpace
+	BitDepth          int
+	HasAlpha          bool
+	HasICCProfile     bool
+	ICCProfileSize    int
+	HDRType           HDRType
+	ChromaSubsampling ChromaSubsampling
+	CompressionType   CompressionType
+}
+
+func analyzeImage(filename string) (*ImageInfo, error) {
 	file, err := os.Open(filename)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	defer func() { _ = file.Close() }()
 
-	fileInfo, err := file.Stat()
-	if err != nil {
-		return 0, err
-	}
-	originalSize := fileInfo.Size()
-
 	config, format, err := image.DecodeConfig(file)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
-	width := config.Width
-	height := config.Height
-
-	var bytesPerPixel int
-	var bitDepth int
-
-	_, _ = file.Seek(0, 0)
-	iccProfile, colorSpace := detectICCProfile(file, format)
-	if colorSpace == "" {
-		colorSpace = "sRGB"
+	info := &ImageInfo{
+		Format: format,
+		Width:  config.Width,
+		Height: config.Height,
 	}
 
 	_, _ = file.Seek(0, 0)
 
 	switch format {
-	case "jpeg":
-		_, _ = file.Seek(0, 0)
-		subsampling := detectJPEGSubsampling(file)
-		isCMYK := config.ColorModel == color.CMYKModel
-
-		if isCMYK {
-			bytesPerPixel = 4
-			bitDepth = 8
-		} else {
-			switch subsampling {
-			case "4:4:4":
-				bytesPerPixel = 3
-			case "4:2:2":
-				bytesPerPixel = 2
-			case "4:2:0":
-				bytesPerPixel = 2
-			default:
-				bytesPerPixel = 3
-			}
-			bitDepth = 8
-			_, _ = file.Seek(0, 0)
-			if is12BitJPEG(file) {
-				bitDepth = 12
-			}
-		}
-
 	case "png":
-		_, _ = file.Seek(0, 0)
-		bitDepth = detectPNGBitDepth(file)
-
-		switch config.ColorModel {
-		case color.GrayModel:
-			bytesPerPixel = 1
-		case color.Gray16Model:
-			bytesPerPixel = 2
-		case color.RGBA64Model, color.NRGBA64Model:
-			bytesPerPixel = 8
-		default:
-			if _, ok := config.ColorModel.(color.Palette); ok {
-				bytesPerPixel = 1
-			} else {
-				bytesPerPixel = 4
-			}
-		}
-
-	case "heif", "avif":
-		switch config.ColorModel {
-		case color.GrayModel:
-			bytesPerPixel = 1
-			bitDepth = 8
-		case color.Gray16Model:
-			bytesPerPixel = 2
-			bitDepth = 10
-		case color.YCbCrModel:
-			bytesPerPixel = 3
-			bitDepth = 8
-		case color.RGBA64Model, color.NRGBA64Model:
-			bytesPerPixel = 8
-			bitDepth = 10
-		default:
-			bytesPerPixel = 3
-			bitDepth = 8
-		}
-		colorSpace = detectHEIFColorSpace(format)
-
+		analyzePNG(file, config, info)
+	case "jpeg":
+		analyzeJPEG(file, config, info)
 	case "webp":
-		bytesPerPixel = 4
-		bitDepth = 8
-
+		analyzeWebP(file, config, info)
+	case "heif":
+		analyzeHEIF(file, config, info)
+	case "avif":
+		analyzeAVIF(file, config, info)
 	default:
-		switch config.ColorModel {
-		case color.GrayModel, color.AlphaModel:
-			bytesPerPixel = 1
-			bitDepth = 8
-		case color.Gray16Model, color.Alpha16Model:
-			bytesPerPixel = 2
-			bitDepth = 16
-		case color.RGBA64Model, color.NRGBA64Model:
-			bytesPerPixel = 8
-			bitDepth = 16
-		case color.CMYKModel:
-			bytesPerPixel = 4
-			bitDepth = 8
-		default:
-			if _, ok := config.ColorModel.(color.Palette); ok {
-				bytesPerPixel = 1
-				bitDepth = 8
-			} else {
-				bytesPerPixel = 4
-				bitDepth = 8
-			}
+		info.ColorModel = ColorModelUnknown
+		info.ColorSpace = ColorSpaceUnknown
+		info.BitDepth = 8
+	}
+
+	return info, nil
+}
+
+func mapStdColorModel(cm color.Model) (ColorModel, bool) {
+	switch cm {
+	case color.RGBAModel, color.RGBA64Model, color.NRGBAModel, color.NRGBA64Model:
+		hasAlpha := true
+		return ColorModelRGB, hasAlpha
+	case color.GrayModel, color.Gray16Model:
+		return ColorModelGrayscale, false
+	case color.AlphaModel, color.Alpha16Model:
+		return ColorModelGrayscale, true
+	case color.YCbCrModel:
+		return ColorModelYCbCr, false
+	default:
+		if _, ok := cm.(color.Palette); ok {
+			return ColorModelIndexed, false
+		}
+		return ColorModelUnknown, false
+	}
+}
+
+func analyzePNG(r io.ReadSeeker, config image.Config, info *ImageInfo) {
+	info.ColorModel, info.HasAlpha = mapStdColorModel(config.ColorModel)
+	info.CompressionType = CompressionLossless
+	info.ChromaSubsampling = ChromaSubsamplingNA
+	info.HDRType = HDRNone
+
+	_, _ = r.Seek(0, 0)
+	info.BitDepth = detectPNGBitDepth(r)
+
+	_, _ = r.Seek(0, 0)
+	iccProfile, colorSpace := detectPNGICCProfile(r)
+	if len(iccProfile) > 0 {
+		info.HasICCProfile = true
+		info.ICCProfileSize = len(iccProfile)
+		info.ColorSpace = parseColorSpace(colorSpace)
+	} else {
+		info.ColorSpace = ColorSpaceSRGB
+	}
+}
+
+func analyzeJPEG(r io.ReadSeeker, config image.Config, info *ImageInfo) {
+	info.CompressionType = CompressionLossy
+	info.HasAlpha = false
+	info.HDRType = HDRNone
+
+	_, _ = r.Seek(0, 0)
+	if is12BitJPEG(r) {
+		info.BitDepth = 12
+	} else {
+		info.BitDepth = 8
+	}
+
+	_, _ = r.Seek(0, 0)
+	subsampling := detectJPEGSubsampling(r)
+	switch subsampling {
+	case "4:4:4":
+		info.ChromaSubsampling = ChromaSubsampling444
+	case "4:2:2":
+		info.ChromaSubsampling = ChromaSubsampling422
+	case "4:2:0":
+		info.ChromaSubsampling = ChromaSubsampling420
+	case "Grayscale":
+		info.ColorModel = ColorModelGrayscale
+		info.ChromaSubsampling = ChromaSubsamplingNA
+	default:
+		info.ChromaSubsampling = ChromaSubsamplingUnknown
+	}
+
+	if info.ColorModel != ColorModelGrayscale {
+		info.ColorModel = ColorModelYCbCr
+	}
+
+	_, _ = r.Seek(0, 0)
+	iccProfile, colorSpace := detectJPEGICCProfile(r)
+	if len(iccProfile) > 0 {
+		info.HasICCProfile = true
+		info.ICCProfileSize = len(iccProfile)
+		info.ColorSpace = parseColorSpace(colorSpace)
+	} else {
+		info.ColorSpace = ColorSpaceSRGB
+	}
+}
+
+func analyzeWebP(r io.ReadSeeker, config image.Config, info *ImageInfo) {
+	info.BitDepth = 8
+	info.HDRType = HDRNone
+
+	info.ColorModel, info.HasAlpha = mapStdColorModel(config.ColorModel)
+
+	_, _ = r.Seek(0, 0)
+	isLossless, chromaSub := detectWebPFormat(r)
+	if isLossless {
+		info.CompressionType = CompressionLossless
+		info.ChromaSubsampling = ChromaSubsamplingNA
+	} else {
+		info.CompressionType = CompressionLossy
+		info.ChromaSubsampling = chromaSub
+		if info.ColorModel != ColorModelGrayscale {
+			info.ColorModel = ColorModelYCbCr
 		}
 	}
 
-	decodedSize := int64(width) * int64(height) * int64(bytesPerPixel)
+	info.ColorSpace = ColorSpaceSRGB
+}
 
-	fmt.Printf("Format: %s\n", format)
-	fmt.Printf("Dimensions: %dx%d\n", width, height)
-	fmt.Printf("Color Model: %s\n", colorModelName(config.ColorModel))
-	if len(iccProfile) > 0 {
-		fmt.Printf("ICC Profile: Present (%d bytes)\n", len(iccProfile))
+func analyzeHEIF(r io.ReadSeeker, config image.Config, info *ImageInfo) {
+	info.ColorModel, info.HasAlpha = mapStdColorModel(config.ColorModel)
+	info.CompressionType = CompressionHybrid
+	info.BitDepth = 10
+	info.ColorSpace = ColorSpaceBT709
+	info.ChromaSubsampling = ChromaSubsampling420
+	info.HDRType = HDRNone
+}
+
+func analyzeAVIF(r io.ReadSeeker, config image.Config, info *ImageInfo) {
+	info.ColorModel, info.HasAlpha = mapStdColorModel(config.ColorModel)
+	info.CompressionType = CompressionHybrid
+	info.BitDepth = 10
+	info.ColorSpace = ColorSpaceBT709
+	info.ChromaSubsampling = ChromaSubsampling420
+	info.HDRType = HDRNone
+}
+
+func parseColorSpace(cs string) ColorSpace {
+	switch cs {
+	case "sRGB", "sRGB (ICC)":
+		return ColorSpaceSRGB
+	case "Adobe RGB":
+		return ColorSpaceAdobeRGB
+	case "BT.709":
+		return ColorSpaceBT709
+	case "BT.2020":
+		return ColorSpaceBT2020
+	case "Display P3":
+		return ColorSpaceDisplayP3
+	default:
+		return ColorSpaceSRGB
+	}
+}
+
+func detectWebPFormat(r io.ReadSeeker) (bool, ChromaSubsampling) {
+	_, _ = r.Seek(0, 0)
+
+	header := make([]byte, 16)
+	if _, err := io.ReadFull(r, header); err != nil {
+		return false, ChromaSubsamplingUnknown
+	}
+
+	if string(header[0:4]) != "RIFF" {
+		return false, ChromaSubsamplingUnknown
+	}
+
+	if string(header[8:12]) != "WEBP" {
+		return false, ChromaSubsamplingUnknown
+	}
+
+	chunkHeader := make([]byte, 4)
+	if _, err := io.ReadFull(r, chunkHeader); err != nil {
+		return false, ChromaSubsamplingUnknown
+	}
+
+	fourCC := string(chunkHeader)
+	if fourCC == "VP8L" {
+		return true, ChromaSubsamplingNA
+	} else if fourCC == "VP8 " {
+		return false, ChromaSubsampling420
+	}
+
+	return false, ChromaSubsamplingUnknown
+}
+
+func estimateDecodedSize(filename string) (int64, error) {
+	info, err := analyzeImage(filename)
+	if err != nil {
+		return 0, err
+	}
+
+	fileInfo, err := os.Stat(filename)
+	if err != nil {
+		return 0, err
+	}
+	originalSize := fileInfo.Size()
+
+	bytesPerPixel := calculateBytesPerPixel(info)
+	decodedSize := int64(info.Width) * int64(info.Height) * int64(bytesPerPixel)
+
+	fmt.Printf("Format: %s\n", info.Format)
+	fmt.Printf("Dimensions: %dx%d\n", info.Width, info.Height)
+	fmt.Printf("Color Model: %s\n", info.ColorModel)
+	if info.HasICCProfile {
+		fmt.Printf("ICC Profile: Present (%d bytes)\n", info.ICCProfileSize)
 	} else {
 		fmt.Printf("ICC Profile: Not detected\n")
 	}
-	fmt.Printf("Color Space: %s\n", colorSpace)
-	fmt.Printf("Bit Depth: %d\n", bitDepth)
-	if format == "jpeg" && config.ColorModel != color.CMYKModel {
-		_, _ = file.Seek(0, 0)
-		subsampling := detectJPEGSubsampling(file)
-		fmt.Printf("YCbCr Subsampling: %s\n", subsampling)
-	}
+	fmt.Printf("Color Space: %s\n", info.ColorSpace)
+	fmt.Printf("Bit Depth: %d\n", info.BitDepth)
+	fmt.Printf("Alpha Channel: %v\n", info.HasAlpha)
+	fmt.Printf("Chroma Subsampling: %s\n", info.ChromaSubsampling)
+	fmt.Printf("HDR Support: %s\n", info.HDRType)
+	fmt.Printf("Compression Type: %s\n", info.CompressionType)
 	fmt.Printf("Original file size: %d bytes (%.2f MB)\n",
 		originalSize, float64(originalSize)/(1024*1024))
 	fmt.Printf("Estimated decoded size: %d bytes (%.2f MB)\n",
@@ -199,14 +403,35 @@ func estimateDecodedSize(filename string) (int64, error) {
 	return decodedSize, nil
 }
 
-func detectICCProfile(r io.ReadSeeker, format string) ([]byte, string) {
-	switch format {
-	case "png":
-		return detectPNGICCProfile(r)
-	case "jpeg":
-		return detectJPEGICCProfile(r)
+func calculateBytesPerPixel(info *ImageInfo) int {
+	bytesPerChannel := (info.BitDepth + 7) / 8
+
+	switch info.ColorModel {
+	case ColorModelGrayscale:
+		if info.HasAlpha {
+			return 2 * bytesPerChannel
+		}
+		return bytesPerChannel
+	case ColorModelIndexed:
+		return 1
+	case ColorModelRGB:
+		if info.HasAlpha {
+			return 4 * bytesPerChannel
+		}
+		return 3 * bytesPerChannel
+	case ColorModelYCbCr:
+		switch info.ChromaSubsampling {
+		case ChromaSubsampling444:
+			return 3 * bytesPerChannel
+		case ChromaSubsampling422:
+			return 2 * bytesPerChannel
+		case ChromaSubsampling420:
+			return 2 * bytesPerChannel
+		default:
+			return 3 * bytesPerChannel
+		}
 	default:
-		return nil, "sRGB"
+		return 4
 	}
 }
 
