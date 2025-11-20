@@ -8,6 +8,7 @@ import (
 	_ "image/png"
 	"os"
 
+	_ "github.com/chai2010/webp"
 	_ "github.com/strukturag/libheif/go/heif"
 )
 
@@ -83,8 +84,30 @@ func estimateDecodedSize(filename string) (int64, error) {
 			// Even RGB without alpha uses RGBA format in Go
 			bytesPerPixel = 4
 		}
-	case "heif":
-		// HEIF/HEIC typically decodes to RGBA
+	case "heif", "avif":
+		// HEIF/HEIC and AVIF support multiple color models
+		// They can be YCbCr (most common), RGB, or monochrome
+		// Check the actual color model from the header
+		switch config.ColorModel {
+		case color.GrayModel:
+			// Monochrome/grayscale HEIF
+			bytesPerPixel = 1
+		case color.Gray16Model:
+			// 10-bit or 16-bit grayscale
+			bytesPerPixel = 2
+		case color.YCbCrModel:
+			// Most common: YCbCr (3 bytes/pixel)
+			bytesPerPixel = 3
+		case color.RGBA64Model, color.NRGBA64Model:
+			// HDR content with 10-bit+ per channel
+			bytesPerPixel = 8
+		default:
+			// RGB or RGBA typically decode to RGBA (4 bytes/pixel)
+			// or YCbCr (3 bytes/pixel) - default to YCbCr as most common
+			bytesPerPixel = 3
+		}
+	case "webp":
+		// WebP decodes to RGBA (4 bytes/pixel)
 		bytesPerPixel = 4
 	default:
 		// Fallback: use color model to estimate
@@ -118,7 +141,7 @@ func estimateDecodedSize(filename string) (int64, error) {
 func main() {
 	if len(os.Args) < 2 {
 		fmt.Println("Usage: testdecode <image-file>")
-		fmt.Println("Supported formats: PNG, JPEG, HEIF/HEIC")
+		fmt.Println("Supported formats: PNG, JPEG, HEIF/HEIC, AVIF, WebP")
 		os.Exit(1)
 	}
 

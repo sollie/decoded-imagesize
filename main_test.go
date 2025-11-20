@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -8,6 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/chai2010/webp"
+	"github.com/strukturag/libheif/go/heif"
 )
 
 var testDimensions = []struct {
@@ -121,12 +125,16 @@ func TestPNGRGBAEstimation(t *testing.T) {
 				t.Fatalf("getActualDecodedSize failed: %v", err)
 			}
 
+			expectedSize := int64(dim.width) * int64(dim.height) * 4
+
+			t.Logf("PNG RGBA %s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				dim.name, estimated, actual, expectedSize)
+
 			if estimated != actual {
 				t.Errorf("Size mismatch for %s: estimated=%d, actual=%d, diff=%d",
 					dim.name, estimated, actual, estimated-actual)
 			}
 
-			expectedSize := int64(dim.width) * int64(dim.height) * 4
 			if actual != expectedSize {
 				t.Errorf("Unexpected actual size for %s: expected=%d, got=%d",
 					dim.name, expectedSize, actual)
@@ -164,12 +172,16 @@ func TestPNGGrayscaleEstimation(t *testing.T) {
 				t.Fatalf("getActualDecodedSize failed: %v", err)
 			}
 
+			expectedSize := int64(dim.width) * int64(dim.height) * 1
+
+			t.Logf("PNG Grayscale %s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				dim.name, estimated, actual, expectedSize)
+
 			if estimated != actual {
 				t.Errorf("Size mismatch for %s: estimated=%d, actual=%d, diff=%d",
 					dim.name, estimated, actual, estimated-actual)
 			}
 
-			expectedSize := int64(dim.width) * int64(dim.height) * 1
 			if actual != expectedSize {
 				t.Errorf("Unexpected actual size for %s: expected=%d, got=%d",
 					dim.name, expectedSize, actual)
@@ -207,12 +219,16 @@ func TestPNGGray16Estimation(t *testing.T) {
 				t.Fatalf("getActualDecodedSize failed: %v", err)
 			}
 
+			expectedSize := int64(dim.width) * int64(dim.height) * 2
+
+			t.Logf("PNG Gray16 %s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				dim.name, estimated, actual, expectedSize)
+
 			if estimated != actual {
 				t.Errorf("Size mismatch for %s: estimated=%d, actual=%d, diff=%d",
 					dim.name, estimated, actual, estimated-actual)
 			}
 
-			expectedSize := int64(dim.width) * int64(dim.height) * 2
 			if actual != expectedSize {
 				t.Errorf("Unexpected actual size for %s: expected=%d, got=%d",
 					dim.name, expectedSize, actual)
@@ -251,6 +267,9 @@ func TestJPEGEstimation(t *testing.T) {
 			}
 
 			expectedSize := int64(dim.width) * int64(dim.height) * 3
+
+			t.Logf("JPEG %s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				dim.name, estimated, actual, expectedSize)
 
 			if estimated != expectedSize {
 				t.Errorf("Estimated size mismatch for %s: estimated=%d, expected=%d",
@@ -323,6 +342,329 @@ func TestAccuracyAcrossAllFormats(t *testing.T) {
 			if estimated != expected || actual != expected {
 				t.Errorf("%s: estimated=%d, actual=%d, expected=%d",
 					tc.name, estimated, actual, expected)
+			}
+		})
+	}
+}
+
+func TestWebPEstimation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	for _, dim := range testDimensions {
+		t.Run(dim.name, func(t *testing.T) {
+			img := generateRGBAImage(dim.width, dim.height)
+
+			filename := filepath.Join(tmpDir, "test_"+dim.name+".webp")
+			file, err := os.Create(filename)
+			if err != nil {
+				t.Fatalf("Failed to create file: %v", err)
+			}
+
+			err = webp.Encode(file, img, &webp.Options{Lossless: false, Quality: 90})
+			file.Close()
+			if err != nil {
+				t.Fatalf("Failed to encode WebP: %v", err)
+			}
+
+			estimated, err := estimateDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("estimateDecodedSize failed: %v", err)
+			}
+
+			actual, err := getActualDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("getActualDecodedSize failed: %v", err)
+			}
+
+			expectedSize := int64(dim.width) * int64(dim.height) * 4
+
+			t.Logf("WebP %s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				dim.name, estimated, actual, expectedSize)
+
+			if estimated != expectedSize {
+				t.Errorf("Estimated size mismatch for %s: estimated=%d, expected=%d",
+					dim.name, estimated, expectedSize)
+			}
+
+			if actual != expectedSize {
+				t.Errorf("Actual size mismatch for %s: actual=%d, expected=%d",
+					dim.name, actual, expectedSize)
+			}
+
+			if estimated != actual {
+				t.Errorf("Estimation vs actual mismatch for %s: estimated=%d, actual=%d",
+					dim.name, estimated, actual)
+			}
+		})
+	}
+}
+
+func TestHEIFEstimation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	for _, dim := range testDimensions {
+		t.Run(dim.name, func(t *testing.T) {
+			img := generateRGBAImage(dim.width, dim.height)
+
+			filename := filepath.Join(tmpDir, "test_"+dim.name+".heic")
+
+			ctx, err := heif.EncodeFromImage(img, heif.CompressionHEVC, 90, heif.LosslessModeDisabled, heif.LoggingLevelNone)
+			if err != nil {
+				t.Fatalf("Failed to encode HEIF: %v", err)
+			}
+
+			err = ctx.WriteToFile(filename)
+			if err != nil {
+				t.Fatalf("Failed to write HEIF file: %v", err)
+			}
+
+			estimated, err := estimateDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("estimateDecodedSize failed: %v", err)
+			}
+
+			actual, err := getActualDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("getActualDecodedSize failed: %v", err)
+			}
+
+			expectedSize := int64(dim.width) * int64(dim.height) * 3
+
+			t.Logf("HEIF %s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				dim.name, estimated, actual, expectedSize)
+
+			if estimated != expectedSize {
+				t.Errorf("Estimated size mismatch for %s: estimated=%d, expected=%d",
+					dim.name, estimated, expectedSize)
+			}
+
+			if actual != expectedSize {
+				t.Errorf("Actual size mismatch for %s: actual=%d, expected=%d",
+					dim.name, actual, expectedSize)
+			}
+
+			if estimated != actual {
+				t.Errorf("Estimation vs actual mismatch for %s: estimated=%d, actual=%d",
+					dim.name, estimated, actual)
+			}
+		})
+	}
+}
+
+func TestAVIFEstimation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	for _, dim := range testDimensions {
+		t.Run(dim.name, func(t *testing.T) {
+			img := generateRGBAImage(dim.width, dim.height)
+
+			filename := filepath.Join(tmpDir, "test_"+dim.name+".avif")
+
+			ctx, err := heif.EncodeFromImage(img, heif.CompressionAV1, 90, heif.LosslessModeDisabled, heif.LoggingLevelNone)
+			if err != nil {
+				t.Skipf("AVIF encoding not available (libheif may not be built with AV1 support): %v", err)
+			}
+
+			err = ctx.WriteToFile(filename)
+			if err != nil {
+				t.Fatalf("Failed to write AVIF file: %v", err)
+			}
+
+			estimated, err := estimateDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("estimateDecodedSize failed: %v", err)
+			}
+
+			actual, err := getActualDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("getActualDecodedSize failed: %v", err)
+			}
+
+			expectedSize := int64(dim.width) * int64(dim.height) * 3
+
+			t.Logf("AVIF %s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				dim.name, estimated, actual, expectedSize)
+
+			if estimated != expectedSize {
+				t.Errorf("Estimated size mismatch for %s: estimated=%d, expected=%d",
+					dim.name, estimated, expectedSize)
+			}
+
+			if actual != expectedSize {
+				t.Errorf("Actual size mismatch for %s: actual=%d, expected=%d",
+					dim.name, actual, expectedSize)
+			}
+
+			if estimated != actual {
+				t.Errorf("Estimation vs actual mismatch for %s: estimated=%d, actual=%d",
+					dim.name, estimated, actual)
+			}
+		})
+	}
+}
+
+func TestWebPLosslessEstimation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	t.Run("RGBA_Lossless", func(t *testing.T) {
+		img := generateRGBAImage(1000, 1000)
+		filename := filepath.Join(tmpDir, "test_lossless.webp")
+		file, err := os.Create(filename)
+		if err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+
+		err = webp.Encode(file, img, &webp.Options{Lossless: true})
+		file.Close()
+		if err != nil {
+			t.Fatalf("Failed to encode WebP: %v", err)
+		}
+
+		estimated, err := estimateDecodedSize(filename)
+		if err != nil {
+			t.Fatalf("estimateDecodedSize failed: %v", err)
+		}
+
+		actual, err := getActualDecodedSize(filename)
+		if err != nil {
+			t.Fatalf("getActualDecodedSize failed: %v", err)
+		}
+
+		expectedSize := int64(1000 * 1000 * 4)
+
+		fmt.Printf("Test result: estimated=%d bytes, actual=%d bytes, expected=%d bytes\n",
+			estimated, actual, expectedSize)
+
+		t.Logf("WebP Lossless: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+			estimated, actual, expectedSize)
+
+		if estimated != expectedSize || actual != expectedSize {
+			t.Errorf("Size mismatch: estimated=%d, actual=%d, expected=%d",
+				estimated, actual, expectedSize)
+		}
+	})
+}
+
+func TestMultipleColorModels(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		format      string
+		generator   func() image.Image
+		encode      func(string, image.Image) error
+		expectBytes int
+	}{
+		{
+			name:   "PNG_Grayscale",
+			format: "PNG",
+			generator: func() image.Image {
+				return generateGrayImage(500, 500)
+			},
+			encode: func(fn string, img image.Image) error {
+				f, _ := os.Create(fn)
+				defer f.Close()
+				return png.Encode(f, img)
+			},
+			expectBytes: 1,
+		},
+		{
+			name:   "PNG_RGBA",
+			format: "PNG",
+			generator: func() image.Image {
+				return generateRGBAImage(500, 500)
+			},
+			encode: func(fn string, img image.Image) error {
+				f, _ := os.Create(fn)
+				defer f.Close()
+				return png.Encode(f, img)
+			},
+			expectBytes: 4,
+		},
+		{
+			name:   "JPEG_YCbCr",
+			format: "JPEG",
+			generator: func() image.Image {
+				return generateRGBAImage(500, 500)
+			},
+			encode: func(fn string, img image.Image) error {
+				f, _ := os.Create(fn)
+				defer f.Close()
+				return jpeg.Encode(f, img, &jpeg.Options{Quality: 90})
+			},
+			expectBytes: 3,
+		},
+		{
+			name:   "WebP_RGBA",
+			format: "WebP",
+			generator: func() image.Image {
+				return generateRGBAImage(500, 500)
+			},
+			encode: func(fn string, img image.Image) error {
+				f, _ := os.Create(fn)
+				defer f.Close()
+				return webp.Encode(f, img, &webp.Options{Lossless: false, Quality: 90})
+			},
+			expectBytes: 4,
+		},
+		{
+			name:   "HEIF_YCbCr",
+			format: "HEIF",
+			generator: func() image.Image {
+				return generateRGBAImage(500, 500)
+			},
+			encode: func(fn string, img image.Image) error {
+				ctx, err := heif.EncodeFromImage(img, heif.CompressionHEVC, 90, heif.LosslessModeDisabled, heif.LoggingLevelNone)
+				if err != nil {
+					return err
+				}
+				return ctx.WriteToFile(fn)
+			},
+			expectBytes: 3,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			img := tc.generator()
+			filename := filepath.Join(tmpDir, tc.name+".img")
+
+			err := tc.encode(filename, img)
+			if err != nil {
+				t.Fatalf("Failed to encode: %v", err)
+			}
+
+			estimated, err := estimateDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("estimateDecodedSize failed: %v", err)
+			}
+
+			actual, err := getActualDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("getActualDecodedSize failed: %v", err)
+			}
+
+			expected := int64(500 * 500 * tc.expectBytes)
+
+			fmt.Printf("Test result: estimated=%d bytes, actual=%d bytes, expected=%d bytes\n",
+				estimated, actual, expected)
+
+			t.Logf("%s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				tc.name, estimated, actual, expected)
+
+			if estimated != expected {
+				t.Errorf("%s: estimated size mismatch: got=%d, want=%d",
+					tc.name, estimated, expected)
+			}
+
+			if actual != expected {
+				t.Errorf("%s: actual size mismatch: got=%d, want=%d",
+					tc.name, actual, expected)
+			}
+
+			if estimated != actual {
+				t.Errorf("%s: estimated vs actual mismatch: estimated=%d, actual=%d",
+					tc.name, estimated, actual)
 			}
 		})
 	}
