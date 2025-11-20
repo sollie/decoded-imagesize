@@ -66,7 +66,7 @@ func getActualDecodedSize(filename string) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	img, _, err := image.Decode(file)
 	if err != nil {
@@ -89,11 +89,50 @@ func getActualDecodedSize(filename string) (int64, error) {
 		bytesPerPixel = 1
 	case *image.Gray16:
 		bytesPerPixel = 2
+	case *image.Paletted:
+		bytesPerPixel = 1
+	case *image.CMYK:
+		bytesPerPixel = 4
 	default:
 		bytesPerPixel = 4
 	}
 
 	return int64(width) * int64(height) * int64(bytesPerPixel), nil
+}
+
+func generatePalettedImage(width, height int) *image.Paletted {
+	palette := make(color.Palette, 256)
+	for i := 0; i < 256; i++ {
+		palette[i] = color.RGBA{
+			R: uint8(i),
+			G: uint8(255 - i),
+			B: uint8((i * 2) % 256),
+			A: 255,
+		}
+	}
+
+	img := image.NewPaletted(image.Rect(0, 0, width, height), palette)
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetColorIndex(x, y, uint8((x+y)%256))
+		}
+	}
+	return img
+}
+
+func generateRGBA64Image(width, height int) *image.RGBA64 {
+	img := image.NewRGBA64(image.Rect(0, 0, width, height))
+	for y := 0; y < height; y++ {
+		for x := 0; x < width; x++ {
+			img.SetRGBA64(x, y, color.RGBA64{
+				R: uint16((x * 65535) / width),
+				G: uint16((y * 65535) / height),
+				B: uint16((x + y) % 65536),
+				A: 65535,
+			})
+		}
+	}
+	return img
 }
 
 func TestPNGRGBAEstimation(t *testing.T) {
@@ -110,7 +149,9 @@ func TestPNGRGBAEstimation(t *testing.T) {
 			}
 
 			err = png.Encode(file, img)
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
 			if err != nil {
 				t.Fatalf("Failed to encode PNG: %v", err)
 			}
@@ -157,7 +198,9 @@ func TestPNGGrayscaleEstimation(t *testing.T) {
 			}
 
 			err = png.Encode(file, img)
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
 			if err != nil {
 				t.Fatalf("Failed to encode PNG: %v", err)
 			}
@@ -204,7 +247,9 @@ func TestPNGGray16Estimation(t *testing.T) {
 			}
 
 			err = png.Encode(file, img)
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
 			if err != nil {
 				t.Fatalf("Failed to encode PNG: %v", err)
 			}
@@ -251,7 +296,9 @@ func TestJPEGEstimation(t *testing.T) {
 			}
 
 			err = jpeg.Encode(file, img, &jpeg.Options{Quality: 90})
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
 			if err != nil {
 				t.Fatalf("Failed to encode JPEG: %v", err)
 			}
@@ -322,7 +369,9 @@ func TestAccuracyAcrossAllFormats(t *testing.T) {
 			}
 
 			err = tc.encoder(file, img)
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
 			if err != nil {
 				t.Fatalf("Failed to encode image: %v", err)
 			}
@@ -361,7 +410,9 @@ func TestWebPEstimation(t *testing.T) {
 			}
 
 			err = webp.Encode(file, img, &webp.Options{Lossless: false, Quality: 90})
-			file.Close()
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
 			if err != nil {
 				t.Fatalf("Failed to encode WebP: %v", err)
 			}
@@ -515,7 +566,9 @@ func TestWebPLosslessEstimation(t *testing.T) {
 		}
 
 		err = webp.Encode(file, img, &webp.Options{Lossless: true})
-		file.Close()
+		if closeErr := file.Close(); closeErr != nil && err == nil {
+			err = closeErr
+		}
 		if err != nil {
 			t.Fatalf("Failed to encode WebP: %v", err)
 		}
@@ -562,8 +615,11 @@ func TestMultipleColorModels(t *testing.T) {
 				return generateGrayImage(500, 500)
 			},
 			encode: func(fn string, img image.Image) error {
-				f, _ := os.Create(fn)
-				defer f.Close()
+				f, err := os.Create(fn)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = f.Close() }()
 				return png.Encode(f, img)
 			},
 			expectBytes: 1,
@@ -575,8 +631,11 @@ func TestMultipleColorModels(t *testing.T) {
 				return generateRGBAImage(500, 500)
 			},
 			encode: func(fn string, img image.Image) error {
-				f, _ := os.Create(fn)
-				defer f.Close()
+				f, err := os.Create(fn)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = f.Close() }()
 				return png.Encode(f, img)
 			},
 			expectBytes: 4,
@@ -588,8 +647,11 @@ func TestMultipleColorModels(t *testing.T) {
 				return generateRGBAImage(500, 500)
 			},
 			encode: func(fn string, img image.Image) error {
-				f, _ := os.Create(fn)
-				defer f.Close()
+				f, err := os.Create(fn)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = f.Close() }()
 				return jpeg.Encode(f, img, &jpeg.Options{Quality: 90})
 			},
 			expectBytes: 3,
@@ -601,8 +663,11 @@ func TestMultipleColorModels(t *testing.T) {
 				return generateRGBAImage(500, 500)
 			},
 			encode: func(fn string, img image.Image) error {
-				f, _ := os.Create(fn)
-				defer f.Close()
+				f, err := os.Create(fn)
+				if err != nil {
+					return err
+				}
+				defer func() { _ = f.Close() }()
 				return webp.Encode(f, img, &webp.Options{Lossless: false, Quality: 90})
 			},
 			expectBytes: 4,
@@ -667,5 +732,180 @@ func TestMultipleColorModels(t *testing.T) {
 					tc.name, estimated, actual)
 			}
 		})
+	}
+}
+
+func TestPNGPalettedEstimation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	for _, dim := range testDimensions {
+		t.Run(dim.name, func(t *testing.T) {
+			img := generatePalettedImage(dim.width, dim.height)
+
+			filename := filepath.Join(tmpDir, "test_paletted_"+dim.name+".png")
+			file, err := os.Create(filename)
+			if err != nil {
+				t.Fatalf("Failed to create file: %v", err)
+			}
+
+			err = png.Encode(file, img)
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				t.Fatalf("Failed to encode PNG: %v", err)
+			}
+
+			estimated, err := estimateDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("estimateDecodedSize failed: %v", err)
+			}
+
+			actual, err := getActualDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("getActualDecodedSize failed: %v", err)
+			}
+
+			expectedSize := int64(dim.width) * int64(dim.height) * 1
+
+			t.Logf("PNG Paletted %s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				dim.name, estimated, actual, expectedSize)
+
+			if estimated != actual {
+				t.Errorf("Size mismatch for %s: estimated=%d, actual=%d, diff=%d",
+					dim.name, estimated, actual, estimated-actual)
+			}
+
+			if actual != expectedSize {
+				t.Errorf("Unexpected actual size for %s: expected=%d, got=%d",
+					dim.name, expectedSize, actual)
+			}
+		})
+	}
+}
+
+func TestPNGRGBA64Estimation(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	for _, dim := range testDimensions {
+		t.Run(dim.name, func(t *testing.T) {
+			img := generateRGBA64Image(dim.width, dim.height)
+
+			filename := filepath.Join(tmpDir, "test_rgba64_"+dim.name+".png")
+			file, err := os.Create(filename)
+			if err != nil {
+				t.Fatalf("Failed to create file: %v", err)
+			}
+
+			err = png.Encode(file, img)
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				t.Fatalf("Failed to encode PNG: %v", err)
+			}
+
+			estimated, err := estimateDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("estimateDecodedSize failed: %v", err)
+			}
+
+			actual, err := getActualDecodedSize(filename)
+			if err != nil {
+				t.Fatalf("getActualDecodedSize failed: %v", err)
+			}
+
+			expectedSize := int64(dim.width) * int64(dim.height) * 8
+
+			t.Logf("PNG RGBA64 %s: estimated=%d bytes, actual=%d bytes, expected=%d bytes",
+				dim.name, estimated, actual, expectedSize)
+
+			if estimated != actual {
+				t.Errorf("Size mismatch for %s: estimated=%d, actual=%d, diff=%d",
+					dim.name, estimated, actual, estimated-actual)
+			}
+
+			if actual != expectedSize {
+				t.Errorf("Unexpected actual size for %s: expected=%d, got=%d",
+					dim.name, expectedSize, actual)
+			}
+		})
+	}
+}
+
+func TestBitDepthDetection(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name     string
+		img      image.Image
+		expected int
+	}{
+		{"Gray8", generateGrayImage(100, 100), 8},
+		{"Gray16", generateGray16Image(100, 100), 16},
+		{"RGBA", generateRGBAImage(100, 100), 8},
+		{"RGBA64", generateRGBA64Image(100, 100), 16},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			filename := filepath.Join(tmpDir, tc.name+".png")
+			file, err := os.Create(filename)
+			if err != nil {
+				t.Fatalf("Failed to create file: %v", err)
+			}
+
+			err = png.Encode(file, tc.img)
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				t.Fatalf("Failed to encode PNG: %v", err)
+			}
+
+			f, err := os.Open(filename)
+			if err != nil {
+				t.Fatalf("Failed to open file: %v", err)
+			}
+			defer func() { _ = f.Close() }()
+			bitDepth := detectPNGBitDepth(f)
+
+			if bitDepth != tc.expected {
+				t.Errorf("%s: bit depth mismatch: got=%d, want=%d", tc.name, bitDepth, tc.expected)
+			}
+		})
+	}
+}
+
+func TestYCbCrSubsamplingDetection(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	img := generateRGBAImage(500, 500)
+	filename := filepath.Join(tmpDir, "test_ycbcr.jpg")
+
+	file, err := os.Create(filename)
+	if err != nil {
+		t.Fatalf("Failed to create file: %v", err)
+	}
+
+	err = jpeg.Encode(file, img, &jpeg.Options{Quality: 90})
+	if closeErr := file.Close(); closeErr != nil && err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		t.Fatalf("Failed to encode JPEG: %v", err)
+	}
+
+	f, err := os.Open(filename)
+	if err != nil {
+		t.Fatalf("Failed to open file: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	subsampling := detectJPEGSubsampling(f)
+	t.Logf("Detected YCbCr subsampling: %s", subsampling)
+
+	if subsampling == "Unknown" {
+		t.Errorf("Failed to detect YCbCr subsampling")
 	}
 }
