@@ -1,5 +1,9 @@
 # Image Decoded Size Estimator
 
+[![Go Version](https://img.shields.io/badge/Go-1.25.4-blue.svg)](https://golang.org)
+[![Test Coverage](https://img.shields.io/badge/coverage-80.0%25-green.svg)](https://github.com/sollie/decoded-imagesize)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A Go tool that estimates the decoded (uncompressed) memory size of image files without fully decoding them. Supports comprehensive color model and color space detection across modern image formats.
 
 ## Features
@@ -121,6 +125,42 @@ Output:
   "decoded_size_bytes": 24000000,
   "compression_ratio": 419.2
 }
+```
+
+## CLI Features
+
+### Output Formats
+
+**Human-Readable** (default):
+- Clear, formatted output for manual inspection
+- Easy to read metadata display
+
+**JSON Output** (`-json` flag):
+- Machine-readable structured data
+- All metadata fields included
+- Ideal for scripting and automation
+- Example: `./decoded-imagesize -json image.png`
+
+### Exit Codes
+
+The tool returns standardized exit codes for scripting:
+- `0` - Success
+- `1` - Usage error (invalid arguments)  
+- `2` - File not found
+- `3` - Invalid or unsupported image format
+- `4` - Processing error
+
+Exit codes are included in JSON error output when using `-json` flag.
+
+**Example error handling in scripts:**
+```bash
+./decoded-imagesize -json image.png > output.json
+case $? in
+  0) echo "Success" ;;
+  2) echo "File not found" ;;
+  3) echo "Invalid format" ;;
+  *) echo "Error occurred" ;;
+esac
 ```
 
 ### Example Output
@@ -259,30 +299,22 @@ This approach is extremely memory-efficient:
 Comprehensive test suite with **100% accuracy** verified across:
 
 ### Test Coverage
-- **15 test suites** covering all supported formats
+- **16 test suites** covering all supported formats
+- **Coverage**: 80.0% overall (100% on critical parsing functions like parseIprpBox)
 - **Test images**: Generated programmatically for consistency
 - **Dimensions tested**: 100×100, 500×500, 1000×1000, 2000×1500, 4000×3000
 - **Color models**: RGB, RGBA, Grayscale, Gray16, RGBA64, YCbCr, Indexed
 - **Bit depths**: 1, 2, 4, 8, 12, 16
-- **Special cases**: Chroma subsampling, ICC profiles, HDR detection
+- **Special cases**: Chroma subsampling, ICC profiles, HDR detection, malformed data handling
 
 ### Test Results
 ```bash
 $ go test -v
 PASS
-ok      decoded-imagesize       9.862s
+ok      github.com/sollie/decoded-imagesize       9.645s
 
 $ go test -cover
-coverage: 89.8% of statements
-```
-
-### Quality Checks
-```bash
-$ golangci-lint run
-0 issues.
-
-$ trivy fs --scanners vuln,misconfig .
-0 vulnerabilities found
+coverage: 80.0% of statements
 ```
 
 Run tests:
@@ -290,14 +322,27 @@ Run tests:
 go test -v              # Verbose output
 go test -cover          # With coverage
 go test -run TestJPEG   # Specific format
+go test -short          # Quick test run
 ```
 
-## Code Quality
+## Quality Metrics
 
-- Zero golangci-lint issues
-- Full error handling
-- No memory leaks (proper file closure)
-- Efficient header-only parsing
+- ✅ **Test Coverage**: 80.0% (100% on critical parsing functions)
+- ✅ **Linter**: 0 issues (golangci-lint)
+- ✅ **Security**: 0 vulnerabilities (trivy)
+- ✅ **All Tests**: Passing
+- ✅ **Dependencies**: Up to date
+- ✅ **Exit Codes**: Standardized for scripting
+- ✅ **JSON Output**: Full machine-readable support
+
+### Quality Checks
+```bash
+$ golangci-lint run
+0 issues.
+
+$ trivy fs --scanners vuln .
+0 vulnerabilities found
+```
 
 ## Dependencies
 
