@@ -2749,3 +2749,406 @@ func TestDetectPNGICCProfile_EdgeCases(t *testing.T) {
 		}
 	})
 }
+
+func TestParseHEIFMetadata_InvalidFiles(t *testing.T) {
+	t.Run("SmallFile_LessThan12Bytes", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 8})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heic"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected default BitDepth 8, got %d", meta.BitDepth)
+		}
+		if meta.ColorSpace != ColorSpaceBT709 {
+			t.Errorf("Expected default ColorSpace BT709, got %v", meta.ColorSpace)
+		}
+	})
+
+	t.Run("InvalidFtypBox", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("XXXX"))
+		buf.Write([]byte("heicheic"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected default BitDepth 8, got %d", meta.BitDepth)
+		}
+	})
+
+	t.Run("ZeroBoxSize", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+		buf.Write([]byte{0, 0, 0, 0})
+		buf.Write([]byte("meta"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected default BitDepth 8, got %d", meta.BitDepth)
+		}
+	})
+
+	t.Run("SmallBoxSize", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+		buf.Write([]byte{0, 0, 0, 4})
+		buf.Write([]byte("meta"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected default BitDepth 8, got %d", meta.BitDepth)
+		}
+	})
+}
+
+func TestParseHEIFMetadata_PixiBox(t *testing.T) {
+	t.Run("Pixi_8bit", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		pixiData := []byte{0, 1, 8}
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+len(pixiData)))
+		buf.Write([]byte("pixi"))
+		buf.Write(pixiData)
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected BitDepth 8, got %d", meta.BitDepth)
+		}
+	})
+
+	t.Run("Pixi_10bit", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		pixiData := []byte{0, 1, 10}
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+len(pixiData)))
+		buf.Write([]byte("pixi"))
+		buf.Write(pixiData)
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 10 {
+			t.Errorf("Expected BitDepth 10, got %d", meta.BitDepth)
+		}
+	})
+
+	t.Run("Pixi_12bit", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		pixiData := []byte{0, 1, 12}
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+len(pixiData)))
+		buf.Write([]byte("pixi"))
+		buf.Write(pixiData)
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 12 {
+			t.Errorf("Expected BitDepth 12, got %d", meta.BitDepth)
+		}
+	})
+
+	t.Run("Pixi_TruncatedData", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(10))
+		buf.Write([]byte("pixi"))
+		buf.Write([]byte{0, 1})
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected default BitDepth 8, got %d", meta.BitDepth)
+		}
+	})
+}
+
+func TestParseHEIFMetadata_ColrBox(t *testing.T) {
+	t.Run("Colr_BT709", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		var colrBuf bytes.Buffer
+		colrBuf.Write([]byte("nclx"))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(1))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(1))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+colrBuf.Len()))
+		buf.Write([]byte("colr"))
+		buf.Write(colrBuf.Bytes())
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.ColorSpace != ColorSpaceBT709 {
+			t.Errorf("Expected ColorSpace BT709, got %v", meta.ColorSpace)
+		}
+	})
+
+	t.Run("Colr_BT2020", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		var colrBuf bytes.Buffer
+		colrBuf.Write([]byte("nclx"))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(9))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(1))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+colrBuf.Len()))
+		buf.Write([]byte("colr"))
+		buf.Write(colrBuf.Bytes())
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.ColorSpace != ColorSpaceBT2020 {
+			t.Errorf("Expected ColorSpace BT2020, got %v", meta.ColorSpace)
+		}
+	})
+
+	t.Run("Colr_DisplayP3", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		var colrBuf bytes.Buffer
+		colrBuf.Write([]byte("nclx"))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(12))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(1))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+colrBuf.Len()))
+		buf.Write([]byte("colr"))
+		buf.Write(colrBuf.Bytes())
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.ColorSpace != ColorSpaceDisplayP3 {
+			t.Errorf("Expected ColorSpace DisplayP3, got %v", meta.ColorSpace)
+		}
+	})
+
+	t.Run("Colr_HDR_PQ", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		var colrBuf bytes.Buffer
+		colrBuf.Write([]byte("nclx"))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(9))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(16))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+colrBuf.Len()))
+		buf.Write([]byte("colr"))
+		buf.Write(colrBuf.Bytes())
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.HDRType != HDRPQ {
+			t.Errorf("Expected HDR type PQ, got %v", meta.HDRType)
+		}
+	})
+
+	t.Run("Colr_HDR_HLG", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		var colrBuf bytes.Buffer
+		colrBuf.Write([]byte("nclx"))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(9))
+		_ = binary.Write(&colrBuf, binary.BigEndian, uint16(18))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+colrBuf.Len()))
+		buf.Write([]byte("colr"))
+		buf.Write(colrBuf.Bytes())
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.HDRType != HDRHLG {
+			t.Errorf("Expected HDR type HLG, got %v", meta.HDRType)
+		}
+	})
+
+	t.Run("Colr_NonNclx", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		colrData := []byte("rICC")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+len(colrData)))
+		buf.Write([]byte("colr"))
+		buf.Write(colrData)
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.ColorSpace != ColorSpaceBT709 {
+			t.Errorf("Expected default ColorSpace BT709, got %v", meta.ColorSpace)
+		}
+	})
+
+	t.Run("Colr_TruncatedNclx", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		colrData := []byte("nclx")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+len(colrData)))
+		buf.Write([]byte("colr"))
+		buf.Write(colrData)
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.ColorSpace != ColorSpaceBT709 {
+			t.Errorf("Expected default ColorSpace BT709, got %v", meta.ColorSpace)
+		}
+	})
+}
+
+func TestParseHEIFMetadata_AuxCBox(t *testing.T) {
+	t.Run("AuxC_WithAlpha", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		auxcData := []byte("urn:mpeg:mpegB:cicp:systems:auxiliary:alpha")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+len(auxcData)))
+		buf.Write([]byte("auxC"))
+		buf.Write(auxcData)
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if !meta.HasAlpha {
+			t.Error("Expected HasAlpha to be true")
+		}
+	})
+
+	t.Run("AuxC_WithoutAlpha", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		auxcData := []byte("urn:mpeg:something:else")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+len(auxcData)))
+		buf.Write([]byte("auxC"))
+		buf.Write(auxcData)
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.HasAlpha {
+			t.Error("Expected HasAlpha to be false")
+		}
+	})
+}
+
+func TestAnalyzeJPEG_WithICCProfile(t *testing.T) {
+	t.Run("JPEG_WithICCProfile", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+
+		buf.Write([]byte{0xFF, 0xE2})
+		iccData := []byte("ICC_PROFILE\x00\x01\x01fake-icc-profile-data-here")
+		_ = binary.Write(&buf, binary.BigEndian, uint16(2+len(iccData)))
+		buf.Write(iccData)
+
+		buf.Write([]byte{0xFF, 0xC0})
+		_ = binary.Write(&buf, binary.BigEndian, uint16(17))
+		buf.WriteByte(8)
+		_ = binary.Write(&buf, binary.BigEndian, uint16(100))
+		_ = binary.Write(&buf, binary.BigEndian, uint16(100))
+		buf.WriteByte(3)
+		buf.WriteByte(1)
+		buf.WriteByte((2 << 4) | 2)
+		buf.WriteByte(0)
+		buf.WriteByte(2)
+		buf.WriteByte((1 << 4) | 1)
+		buf.WriteByte(1)
+		buf.WriteByte(3)
+		buf.WriteByte((1 << 4) | 1)
+		buf.WriteByte(1)
+
+		buf.Write([]byte{0xFF, 0xDA})
+		_ = binary.Write(&buf, binary.BigEndian, uint16(12))
+		buf.WriteByte(3)
+		buf.WriteByte(1)
+		buf.WriteByte(0)
+		buf.WriteByte(2)
+		buf.WriteByte(0x11)
+		buf.WriteByte(3)
+		buf.WriteByte(0x11)
+		buf.WriteByte(0)
+		buf.WriteByte(63)
+		buf.WriteByte(0)
+
+		buf.Write([]byte{0xFF, 0xD9})
+
+		tmpfile, err := os.CreateTemp("", "test_jpeg_icc_*.jpg")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Remove(tmpfile.Name()) }()
+
+		if _, err := tmpfile.Write(buf.Bytes()); err != nil {
+			t.Fatal(err)
+		}
+		if err := tmpfile.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		info, err := analyzeImage(tmpfile.Name())
+		if err != nil {
+			t.Fatalf("Failed to analyze image: %v", err)
+		}
+
+		if !info.HasICCProfile {
+			t.Error("Expected HasICCProfile to be true")
+		}
+		if info.ICCProfileSize == 0 {
+			t.Error("Expected ICCProfileSize > 0")
+		}
+		if info.ColorSpace != ColorSpaceSRGB {
+			t.Errorf("Expected ColorSpace sRGB, got %v", info.ColorSpace)
+		}
+	})
+}
