@@ -1,4 +1,4 @@
-module decoded-imagesize
+module github.com/sollie/decoded-imagesize
 
 go 1.25.4
 

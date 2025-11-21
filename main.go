@@ -17,6 +17,14 @@ import (
 	_ "github.com/strukturag/libheif/go/heif"
 )
 
+const (
+	ExitSuccess         = 0
+	ExitUsageError      = 1
+	ExitFileNotFound    = 2
+	ExitInvalidFormat   = 3
+	ExitProcessingError = 4
+)
+
 type ColorModel int
 
 const (
@@ -942,19 +950,91 @@ func main() {
 		fmt.Println("Supported formats: PNG, JPEG, HEIF/HEIC, AVIF, WebP")
 		fmt.Println("\nFlags:")
 		fmt.Println("  -json    Output in JSON format")
-		os.Exit(1)
+		fmt.Println("\nExit Codes:")
+		fmt.Println("  0 - Success")
+		fmt.Println("  1 - Usage error")
+		fmt.Println("  2 - File not found")
+		fmt.Println("  3 - Invalid or unsupported format")
+		fmt.Println("  4 - Processing error")
+		os.Exit(ExitUsageError)
 	}
 
 	filename := flag.Arg(0)
 
 	_, err := estimateDecodedSize(filename, *jsonOutput)
 	if err != nil {
+		exitCode := categorizeError(err)
 		if *jsonOutput {
-			errJSON, _ := json.Marshal(map[string]string{"error": err.Error()})
+			errJSON, _ := json.Marshal(map[string]interface{}{
+				"error":     err.Error(),
+				"exit_code": exitCode,
+			})
 			fmt.Println(string(errJSON))
 		} else {
-			fmt.Println("Error:", err)
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 		}
-		os.Exit(1)
+		os.Exit(exitCode)
 	}
+}
+
+func categorizeError(err error) int {
+	if err == nil {
+		return ExitSuccess
+	}
+
+	errMsg := err.Error()
+
+	if os.IsNotExist(err) || contains(errMsg, "no such file", "cannot find") {
+		return ExitFileNotFound
+	}
+
+	if contains(errMsg, "unknown format", "invalid", "decode", "unsupported") {
+		return ExitInvalidFormat
+	}
+
+	return ExitProcessingError
+}
+
+func contains(s string, substrs ...string) bool {
+	lower := ""
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 'A' && s[i] <= 'Z' {
+			lower += string(s[i] + 32)
+		} else {
+			lower += string(s[i])
+		}
+	}
+	for _, substr := range substrs {
+		lowerSubstr := ""
+		for i := 0; i < len(substr); i++ {
+			if substr[i] >= 'A' && substr[i] <= 'Z' {
+				lowerSubstr += string(substr[i] + 32)
+			} else {
+				lowerSubstr += string(substr[i])
+			}
+		}
+		if containsSubstring(lower, lowerSubstr) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSubstring(s, substr string) bool {
+	if len(substr) > len(s) {
+		return false
+	}
+	for i := 0; i <= len(s)-len(substr); i++ {
+		match := true
+		for j := 0; j < len(substr); j++ {
+			if s[i+j] != substr[j] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
 }

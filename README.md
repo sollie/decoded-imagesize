@@ -67,7 +67,13 @@ A detailed comparison of supported image format characteristics:
 ## Installation
 
 ```bash
-git clone <repository-url>
+go install github.com/sollie/decoded-imagesize@latest
+```
+
+Or clone and build from source:
+
+```bash
+git clone https://github.com/sollie/decoded-imagesize.git
 cd decoded-imagesize
 go mod tidy
 go build
