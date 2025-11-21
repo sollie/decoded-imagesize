@@ -953,7 +953,7 @@ func TestImageInfoPNG(t *testing.T) {
 			expectedBitDepth: 16,
 			expectedAlpha:    false,
 			expectedChroma:   ChromaSubsamplingNA,
-			expectedHDR:      HDRNone,
+			expectedHDR:      HDRLimited,
 			expectedComp:     CompressionLossless,
 		},
 		{
@@ -963,7 +963,7 @@ func TestImageInfoPNG(t *testing.T) {
 			expectedBitDepth: 16,
 			expectedAlpha:    true,
 			expectedChroma:   ChromaSubsamplingNA,
-			expectedHDR:      HDRNone,
+			expectedHDR:      HDRLimited,
 			expectedComp:     CompressionLossless,
 		},
 		{
@@ -1030,6 +1030,76 @@ func TestImageInfoPNG(t *testing.T) {
 			if info.ColorSpace != ColorSpaceSRGB {
 				t.Errorf("ColorSpace mismatch: got=%s, want=sRGB", info.ColorSpace)
 			}
+		})
+	}
+}
+
+func TestPNGHDRDetection(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name        string
+		img         image.Image
+		bitDepth    int
+		expectedHDR HDRType
+	}{
+		{
+			name:        "8-bit_RGBA_NoHDR",
+			img:         generateRGBAImage(100, 100),
+			bitDepth:    8,
+			expectedHDR: HDRNone,
+		},
+		{
+			name:        "8-bit_Gray_NoHDR",
+			img:         generateGrayImage(100, 100),
+			bitDepth:    8,
+			expectedHDR: HDRNone,
+		},
+		{
+			name:        "16-bit_Gray16_LimitedHDR",
+			img:         generateGray16Image(100, 100),
+			bitDepth:    16,
+			expectedHDR: HDRLimited,
+		},
+		{
+			name:        "16-bit_RGBA64_LimitedHDR",
+			img:         generateRGBA64Image(100, 100),
+			bitDepth:    16,
+			expectedHDR: HDRLimited,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			filename := filepath.Join(tmpDir, tc.name+".png")
+			file, err := os.Create(filename)
+			if err != nil {
+				t.Fatalf("Failed to create file: %v", err)
+			}
+
+			err = png.Encode(file, tc.img)
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				t.Fatalf("Failed to encode PNG: %v", err)
+			}
+
+			info, err := analyzeImage(filename)
+			if err != nil {
+				t.Fatalf("analyzeImage failed: %v", err)
+			}
+
+			if info.BitDepth != tc.bitDepth {
+				t.Errorf("BitDepth mismatch: got=%d, want=%d", info.BitDepth, tc.bitDepth)
+			}
+
+			if info.HDRType != tc.expectedHDR {
+				t.Errorf("HDRType mismatch for %s: got=%s, want=%s",
+					tc.name, info.HDRType, tc.expectedHDR)
+			}
+
+			t.Logf("%s: BitDepth=%d, HDR=%s ✓", tc.name, info.BitDepth, info.HDRType)
 		})
 	}
 }
