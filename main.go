@@ -12,6 +12,10 @@ import (
 	_ "image/png"
 	"io"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"sync"
 
 	_ "github.com/chai2010/webp"
 	_ "github.com/strukturag/libheif/go/heif"
@@ -23,6 +27,7 @@ const (
 	ExitFileNotFound    = 2
 	ExitInvalidFormat   = 3
 	ExitProcessingError = 4
+	ExitPartialSuccess  = 5
 )
 
 type ColorModel int
@@ -52,6 +57,26 @@ func (cm ColorModel) String() string {
 
 func (cm ColorModel) MarshalJSON() ([]byte, error) {
 	return json.Marshal(cm.String())
+}
+
+func (cm *ColorModel) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch s {
+	case "RGB":
+		*cm = ColorModelRGB
+	case "YCbCr":
+		*cm = ColorModelYCbCr
+	case "Grayscale":
+		*cm = ColorModelGrayscale
+	case "Indexed":
+		*cm = ColorModelIndexed
+	default:
+		*cm = ColorModelUnknown
+	}
+	return nil
 }
 
 type ColorSpace int
@@ -86,6 +111,28 @@ func (cs ColorSpace) MarshalJSON() ([]byte, error) {
 	return json.Marshal(cs.String())
 }
 
+func (cs *ColorSpace) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch s {
+	case "sRGB":
+		*cs = ColorSpaceSRGB
+	case "Adobe RGB":
+		*cs = ColorSpaceAdobeRGB
+	case "BT.709":
+		*cs = ColorSpaceBT709
+	case "BT.2020":
+		*cs = ColorSpaceBT2020
+	case "Display P3":
+		*cs = ColorSpaceDisplayP3
+	default:
+		*cs = ColorSpaceUnknown
+	}
+	return nil
+}
+
 type HDRType int
 
 const (
@@ -112,6 +159,26 @@ func (h HDRType) String() string {
 
 func (h HDRType) MarshalJSON() ([]byte, error) {
 	return json.Marshal(h.String())
+}
+
+func (h *HDRType) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch s {
+	case "PQ (SMPTE ST 2084)":
+		*h = HDRPQ
+	case "HLG (ARIB STD-B67)":
+		*h = HDRHLG
+	case "Limited":
+		*h = HDRLimited
+	case "None":
+		*h = HDRNone
+	default:
+		*h = HDRNone
+	}
+	return nil
 }
 
 type ChromaSubsampling int
@@ -143,6 +210,26 @@ func (cs ChromaSubsampling) MarshalJSON() ([]byte, error) {
 	return json.Marshal(cs.String())
 }
 
+func (cs *ChromaSubsampling) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch s {
+	case "4:4:4":
+		*cs = ChromaSubsampling444
+	case "4:2:2":
+		*cs = ChromaSubsampling422
+	case "4:2:0":
+		*cs = ChromaSubsampling420
+	case "N/A":
+		*cs = ChromaSubsamplingNA
+	default:
+		*cs = ChromaSubsamplingUnknown
+	}
+	return nil
+}
+
 type CompressionType int
 
 const (
@@ -169,6 +256,24 @@ func (ct CompressionType) MarshalJSON() ([]byte, error) {
 	return json.Marshal(ct.String())
 }
 
+func (ct *CompressionType) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err != nil {
+		return err
+	}
+	switch s {
+	case "Lossless":
+		*ct = CompressionLossless
+	case "Lossy":
+		*ct = CompressionLossy
+	case "Lossy/Lossless":
+		*ct = CompressionHybrid
+	default:
+		*ct = CompressionUnknown
+	}
+	return nil
+}
+
 type ImageInfo struct {
 	Format            string            `json:"format"`
 	Width             int               `json:"width"`
@@ -185,6 +290,29 @@ type ImageInfo struct {
 	OriginalSize      int64             `json:"original_size_bytes"`
 	DecodedSize       int64             `json:"decoded_size_bytes"`
 	CompressionRatio  float64           `json:"compression_ratio"`
+	Filename          string            `json:"filename,omitempty"`
+}
+
+type BatchResult struct {
+	Images  []ImageInfo    `json:"images"`
+	Summary BatchSummary   `json:"summary"`
+	Errors  []ProcessError `json:"errors,omitempty"`
+}
+
+type BatchSummary struct {
+	TotalFiles          int     `json:"total_files"`
+	SuccessfulFiles     int     `json:"successful_files"`
+	FailedFiles         int     `json:"failed_files"`
+	TotalOriginalSize   int64   `json:"total_original_size_bytes"`
+	TotalDecodedSize    int64   `json:"total_decoded_size_bytes"`
+	AverageCompression  float64 `json:"average_compression_ratio"`
+	TotalOriginalSizeMB float64 `json:"total_original_size_mb"`
+	TotalDecodedSizeMB  float64 `json:"total_decoded_size_mb"`
+}
+
+type ProcessError struct {
+	Filename string `json:"filename"`
+	Error    string `json:"error"`
 }
 
 func analyzeImage(filename string) (*ImageInfo, error) {
@@ -941,37 +1069,260 @@ func detectPNGBitDepth(r io.ReadSeeker) int {
 	return bitDepth
 }
 
+func collectFiles(args []string, dirPath string, recursive bool) ([]string, error) {
+	var files []string
+	supportedExts := map[string]bool{
+		".png": true, ".jpg": true, ".jpeg": true,
+		".webp": true, ".heif": true, ".heic": true, ".avif": true,
+	}
+
+	if dirPath != "" {
+		err := filepath.Walk(dirPath, func(path string, info os.FileInfo, err error) error {
+			if err != nil {
+				return err
+			}
+
+			if info.IsDir() {
+				if !recursive && path != dirPath {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+
+			ext := strings.ToLower(filepath.Ext(path))
+			if supportedExts[ext] {
+				files = append(files, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		for _, arg := range args {
+			info, err := os.Stat(arg)
+			if err != nil {
+				continue
+			}
+			if !info.IsDir() {
+				files = append(files, arg)
+			}
+		}
+	}
+
+	return files, nil
+}
+
+func processBatch(files []string, workers int, jsonOutput bool) (*BatchResult, int) {
+	if workers <= 0 {
+		workers = runtime.NumCPU()
+	}
+
+	type job struct {
+		filename string
+		index    int
+	}
+
+	type result struct {
+		info  *ImageInfo
+		err   error
+		index int
+	}
+
+	jobs := make(chan job, len(files))
+	results := make(chan result, len(files))
+
+	var wg sync.WaitGroup
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := range jobs {
+				info, err := analyzeImage(j.filename)
+				if err == nil {
+					fileInfo, statErr := os.Stat(j.filename)
+					if statErr == nil {
+						originalSize := fileInfo.Size()
+						bytesPerPixel := calculateBytesPerPixel(info)
+						decodedSize := int64(info.Width) * int64(info.Height) * int64(bytesPerPixel)
+
+						info.OriginalSize = originalSize
+						info.DecodedSize = decodedSize
+						info.CompressionRatio = float64(decodedSize) / float64(originalSize)
+						info.Filename = j.filename
+					}
+				}
+				results <- result{info: info, err: err, index: j.index}
+			}
+		}()
+	}
+
+	for i, file := range files {
+		jobs <- job{filename: file, index: i}
+	}
+	close(jobs)
+
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	batchResult := &BatchResult{
+		Images: make([]ImageInfo, 0, len(files)),
+		Errors: make([]ProcessError, 0),
+	}
+
+	resultMap := make(map[int]result)
+	for r := range results {
+		resultMap[r.index] = r
+	}
+
+	successCount := 0
+	var totalOriginal, totalDecoded int64
+	var totalCompressionRatio float64
+
+	for i := 0; i < len(files); i++ {
+		r := resultMap[i]
+		if r.err != nil {
+			batchResult.Errors = append(batchResult.Errors, ProcessError{
+				Filename: files[i],
+				Error:    r.err.Error(),
+			})
+		} else if r.info != nil {
+			batchResult.Images = append(batchResult.Images, *r.info)
+			successCount++
+			totalOriginal += r.info.OriginalSize
+			totalDecoded += r.info.DecodedSize
+			totalCompressionRatio += r.info.CompressionRatio
+		}
+	}
+
+	avgCompression := 0.0
+	if successCount > 0 {
+		avgCompression = totalCompressionRatio / float64(successCount)
+	}
+
+	batchResult.Summary = BatchSummary{
+		TotalFiles:          len(files),
+		SuccessfulFiles:     successCount,
+		FailedFiles:         len(files) - successCount,
+		TotalOriginalSize:   totalOriginal,
+		TotalDecodedSize:    totalDecoded,
+		AverageCompression:  avgCompression,
+		TotalOriginalSizeMB: float64(totalOriginal) / (1024 * 1024),
+		TotalDecodedSizeMB:  float64(totalDecoded) / (1024 * 1024),
+	}
+
+	exitCode := ExitSuccess
+	if successCount == 0 {
+		exitCode = ExitProcessingError
+	} else if successCount < len(files) {
+		exitCode = ExitPartialSuccess
+	}
+
+	return batchResult, exitCode
+}
+
+func printBatchResults(result *BatchResult) {
+	fmt.Printf("\n=== Batch Processing Summary ===\n")
+	fmt.Printf("Total files: %d\n", result.Summary.TotalFiles)
+	fmt.Printf("Successful: %d\n", result.Summary.SuccessfulFiles)
+	fmt.Printf("Failed: %d\n", result.Summary.FailedFiles)
+	fmt.Printf("Total original size: %.2f MB\n", result.Summary.TotalOriginalSizeMB)
+	fmt.Printf("Total decoded size: %.2f MB\n", result.Summary.TotalDecodedSizeMB)
+	fmt.Printf("Average compression ratio: %.1fx\n", result.Summary.AverageCompression)
+
+	if len(result.Errors) > 0 {
+		fmt.Printf("\n=== Errors ===\n")
+		for _, e := range result.Errors {
+			fmt.Printf("  %s: %s\n", e.Filename, e.Error)
+		}
+	}
+
+	if len(result.Images) > 0 {
+		fmt.Printf("\n=== Processed Images ===\n")
+		for _, img := range result.Images {
+			fmt.Printf("\nFile: %s\n", img.Filename)
+			fmt.Printf("  Format: %s | Dimensions: %dx%d\n", img.Format, img.Width, img.Height)
+			fmt.Printf("  Color Model: %s | Color Space: %s | Bit Depth: %d\n",
+				img.ColorModel, img.ColorSpace, img.BitDepth)
+			fmt.Printf("  Original: %.2f MB | Decoded: %.2f MB | Ratio: %.1fx\n",
+				float64(img.OriginalSize)/(1024*1024),
+				float64(img.DecodedSize)/(1024*1024),
+				img.CompressionRatio)
+		}
+	}
+}
+
 func main() {
 	jsonOutput := flag.Bool("json", false, "Output in JSON format")
+	dirPath := flag.String("dir", "", "Process all images in directory")
+	recursive := flag.Bool("recursive", false, "Recursively process subdirectories (use with -dir)")
+	workers := flag.Int("workers", runtime.NumCPU(), "Number of parallel workers for batch processing")
 	flag.Parse()
 
-	if flag.NArg() < 1 {
-		fmt.Println("Usage: decoded-imagesize [-json] <image-file>")
+	args := flag.Args()
+
+	if len(args) == 0 && *dirPath == "" {
+		fmt.Println("Usage: decoded-imagesize [-json] [-dir <directory>] [-recursive] [-workers N] <image-file(s)>")
 		fmt.Println("Supported formats: PNG, JPEG, HEIF/HEIC, AVIF, WebP")
 		fmt.Println("\nFlags:")
-		fmt.Println("  -json    Output in JSON format")
+		fmt.Println("  -json          Output in JSON format")
+		fmt.Println("  -dir <path>    Process all images in directory")
+		fmt.Println("  -recursive     Recursively process subdirectories (use with -dir)")
+		fmt.Printf("  -workers N     Number of parallel workers (default: %d)\n", runtime.NumCPU())
+		fmt.Println("\nExamples:")
+		fmt.Println("  Single file:     decoded-imagesize image.png")
+		fmt.Println("  Multiple files:  decoded-imagesize image1.png image2.jpg image3.webp")
+		fmt.Println("  Directory:       decoded-imagesize -dir /path/to/images")
+		fmt.Println("  Recursive:       decoded-imagesize -dir /path/to/images -recursive")
 		fmt.Println("\nExit Codes:")
 		fmt.Println("  0 - Success")
 		fmt.Println("  1 - Usage error")
 		fmt.Println("  2 - File not found")
 		fmt.Println("  3 - Invalid or unsupported format")
 		fmt.Println("  4 - Processing error")
+		fmt.Println("  5 - Partial success (some files failed)")
 		os.Exit(ExitUsageError)
 	}
 
-	filename := flag.Arg(0)
-
-	_, err := estimateDecodedSize(filename, *jsonOutput)
+	files, err := collectFiles(args, *dirPath, *recursive)
 	if err != nil {
-		exitCode := categorizeError(err)
+		fmt.Fprintf(os.Stderr, "Error collecting files: %v\n", err)
+		os.Exit(ExitProcessingError)
+	}
+
+	if len(files) == 0 {
+		fmt.Fprintf(os.Stderr, "No supported image files found\n")
+		os.Exit(ExitFileNotFound)
+	}
+
+	if len(files) == 1 {
+		_, err := estimateDecodedSize(files[0], *jsonOutput)
+		if err != nil {
+			exitCode := categorizeError(err)
+			if *jsonOutput {
+				errJSON, _ := json.Marshal(map[string]interface{}{
+					"error":     err.Error(),
+					"exit_code": exitCode,
+				})
+				fmt.Println(string(errJSON))
+			} else {
+				fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			}
+			os.Exit(exitCode)
+		}
+	} else {
+		result, exitCode := processBatch(files, *workers, *jsonOutput)
 		if *jsonOutput {
-			errJSON, _ := json.Marshal(map[string]interface{}{
-				"error":     err.Error(),
-				"exit_code": exitCode,
-			})
-			fmt.Println(string(errJSON))
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetIndent("", "  ")
+			if err := encoder.Encode(result); err != nil {
+				fmt.Fprintf(os.Stderr, "Error encoding JSON: %v\n", err)
+				os.Exit(ExitProcessingError)
+			}
 		} else {
-			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			printBatchResults(result)
 		}
 		os.Exit(exitCode)
 	}

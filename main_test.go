@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/zlib"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"image"
 	"image/color"
@@ -3515,4 +3516,188 @@ func TestParseIprpBox_MalformedData(t *testing.T) {
 
 		t.Logf("Parsed iprp box successfully")
 	})
+}
+
+func TestCollectFiles(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	subDir := filepath.Join(tmpDir, "subdir")
+	if err := os.Mkdir(subDir, 0755); err != nil {
+		t.Fatalf("Failed to create subdir: %v", err)
+	}
+
+	testFiles := []string{
+		filepath.Join(tmpDir, "test1.png"),
+		filepath.Join(tmpDir, "test2.jpg"),
+		filepath.Join(tmpDir, "test3.webp"),
+		filepath.Join(subDir, "test4.png"),
+		filepath.Join(tmpDir, "readme.txt"),
+	}
+
+	for _, f := range testFiles {
+		file, err := os.Create(f)
+		if err != nil {
+			t.Fatalf("Failed to create test file %s: %v", f, err)
+		}
+		_ = file.Close()
+	}
+
+	t.Run("MultipleFiles", func(t *testing.T) {
+		args := []string{testFiles[0], testFiles[1], testFiles[2]}
+		files, err := collectFiles(args, "", false)
+		if err != nil {
+			t.Fatalf("collectFiles failed: %v", err)
+		}
+		if len(files) != 3 {
+			t.Errorf("Expected 3 files, got %d", len(files))
+		}
+	})
+
+	t.Run("DirectoryNonRecursive", func(t *testing.T) {
+		files, err := collectFiles(nil, tmpDir, false)
+		if err != nil {
+			t.Fatalf("collectFiles failed: %v", err)
+		}
+		if len(files) != 3 {
+			t.Errorf("Expected 3 files in root, got %d", len(files))
+		}
+	})
+
+	t.Run("DirectoryRecursive", func(t *testing.T) {
+		files, err := collectFiles(nil, tmpDir, true)
+		if err != nil {
+			t.Fatalf("collectFiles failed: %v", err)
+		}
+		if len(files) != 4 {
+			t.Errorf("Expected 4 files recursively, got %d", len(files))
+		}
+	})
+}
+
+func TestProcessBatch(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	files := []string{
+		filepath.Join(tmpDir, "test1.png"),
+		filepath.Join(tmpDir, "test2.png"),
+		filepath.Join(tmpDir, "test3.png"),
+	}
+
+	for _, f := range files {
+		img := generateRGBAImage(100, 100)
+		file, err := os.Create(f)
+		if err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+		if err := png.Encode(file, img); err != nil {
+			_ = file.Close()
+			t.Fatalf("Failed to encode PNG: %v", err)
+		}
+		_ = file.Close()
+	}
+
+	t.Run("AllSuccessful", func(t *testing.T) {
+		result, exitCode := processBatch(files, 2, false)
+		if exitCode != ExitSuccess {
+			t.Errorf("Expected ExitSuccess, got %d", exitCode)
+		}
+		if result.Summary.TotalFiles != 3 {
+			t.Errorf("Expected 3 total files, got %d", result.Summary.TotalFiles)
+		}
+		if result.Summary.SuccessfulFiles != 3 {
+			t.Errorf("Expected 3 successful files, got %d", result.Summary.SuccessfulFiles)
+		}
+		if result.Summary.FailedFiles != 0 {
+			t.Errorf("Expected 0 failed files, got %d", result.Summary.FailedFiles)
+		}
+		if len(result.Images) != 3 {
+			t.Errorf("Expected 3 images in result, got %d", len(result.Images))
+		}
+	})
+
+	t.Run("WithErrors", func(t *testing.T) {
+		filesWithError := append(files, filepath.Join(tmpDir, "nonexistent.png"))
+		result, exitCode := processBatch(filesWithError, 2, false)
+		if exitCode != ExitPartialSuccess {
+			t.Errorf("Expected ExitPartialSuccess, got %d", exitCode)
+		}
+		if result.Summary.TotalFiles != 4 {
+			t.Errorf("Expected 4 total files, got %d", result.Summary.TotalFiles)
+		}
+		if result.Summary.SuccessfulFiles != 3 {
+			t.Errorf("Expected 3 successful files, got %d", result.Summary.SuccessfulFiles)
+		}
+		if result.Summary.FailedFiles != 1 {
+			t.Errorf("Expected 1 failed file, got %d", result.Summary.FailedFiles)
+		}
+		if len(result.Errors) != 1 {
+			t.Errorf("Expected 1 error, got %d", len(result.Errors))
+		}
+	})
+
+	t.Run("SummaryStatistics", func(t *testing.T) {
+		result, _ := processBatch(files, 2, false)
+		if result.Summary.TotalOriginalSize <= 0 {
+			t.Error("Expected positive total original size")
+		}
+		if result.Summary.TotalDecodedSize <= 0 {
+			t.Error("Expected positive total decoded size")
+		}
+		if result.Summary.AverageCompression <= 0 {
+			t.Error("Expected positive average compression ratio")
+		}
+		if result.Summary.TotalOriginalSizeMB <= 0 {
+			t.Error("Expected positive total original size in MB")
+		}
+		if result.Summary.TotalDecodedSizeMB <= 0 {
+			t.Error("Expected positive total decoded size in MB")
+		}
+	})
+
+	t.Run("FilenamesPresent", func(t *testing.T) {
+		result, _ := processBatch(files, 2, false)
+		for _, img := range result.Images {
+			if img.Filename == "" {
+				t.Error("Expected filename to be set in batch results")
+			}
+		}
+	})
+}
+
+func TestBatchResultJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	files := []string{
+		filepath.Join(tmpDir, "test1.png"),
+		filepath.Join(tmpDir, "test2.png"),
+	}
+
+	for _, f := range files {
+		img := generateRGBAImage(50, 50)
+		file, err := os.Create(f)
+		if err != nil {
+			t.Fatalf("Failed to create file: %v", err)
+		}
+		if err := png.Encode(file, img); err != nil {
+			_ = file.Close()
+			t.Fatalf("Failed to encode PNG: %v", err)
+		}
+		_ = file.Close()
+	}
+
+	result, _ := processBatch(files, 1, true)
+
+	jsonData, err := json.Marshal(result)
+	if err != nil {
+		t.Fatalf("Failed to marshal JSON: %v", err)
+	}
+
+	var unmarshaled BatchResult
+	if err := json.Unmarshal(jsonData, &unmarshaled); err != nil {
+		t.Fatalf("Failed to unmarshal JSON: %v", err)
+	}
+
+	if unmarshaled.Summary.TotalFiles != 2 {
+		t.Errorf("Expected 2 total files after unmarshal, got %d", unmarshaled.Summary.TotalFiles)
+	}
 }

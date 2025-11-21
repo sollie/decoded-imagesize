@@ -88,23 +88,50 @@ go build
 ### Basic Usage
 
 ```bash
-# Human-readable output
+# Single file - human-readable output
 ./decoded-imagesize <image-file>
 
-# JSON output for scripting
+# Single file - JSON output for scripting
 ./decoded-imagesize -json <image-file>
+
+# Multiple files
+./decoded-imagesize <image1> <image2> <image3> ...
+
+# Process directory
+./decoded-imagesize -dir <directory>
+
+# Process directory recursively
+./decoded-imagesize -dir <directory> -recursive
+
+# Control parallel processing
+./decoded-imagesize -workers 4 -dir <directory>
 ```
 
 ### Examples
 
-**Normal output:**
+**Single file:**
 ```bash
 ./decoded-imagesize image.png
 ```
 
-**JSON output:**
+**Multiple files:**
 ```bash
-./decoded-imagesize -json image.png
+./decoded-imagesize image1.png image2.jpg image3.webp
+```
+
+**Directory (non-recursive):**
+```bash
+./decoded-imagesize -dir /path/to/images
+```
+
+**Directory (recursive):**
+```bash
+./decoded-imagesize -dir /path/to/images -recursive
+```
+
+**JSON output (batch mode):**
+```bash
+./decoded-imagesize -json -dir /path/to/images
 ```
 
 Output:
@@ -127,6 +154,42 @@ Output:
 }
 ```
 
+**Batch output (JSON):**
+```json
+{
+  "images": [
+    {
+      "format": "png",
+      "width": 100,
+      "height": 100,
+      "color_model": "RGB",
+      "color_space": "sRGB",
+      "bit_depth": 8,
+      "has_alpha": true,
+      "has_icc_profile": false,
+      "hdr_type": "None",
+      "chroma_subsampling": "N/A",
+      "compression_type": "Lossless",
+      "original_size_bytes": 324,
+      "decoded_size_bytes": 40000,
+      "compression_ratio": 123.46,
+      "filename": "test_batch/image1.png"
+    }
+  ],
+  "summary": {
+    "total_files": 3,
+    "successful_files": 3,
+    "failed_files": 0,
+    "total_original_size_bytes": 6059,
+    "total_decoded_size_bytes": 340000,
+    "average_compression_ratio": 137.48,
+    "total_original_size_mb": 0.006,
+    "total_decoded_size_mb": 0.324
+  },
+  "errors": []
+}
+```
+
 ## CLI Features
 
 ### Output Formats
@@ -141,6 +204,28 @@ Output:
 - Ideal for scripting and automation
 - Example: `./decoded-imagesize -json image.png`
 
+### Batch Processing
+
+**Multiple Files**:
+- Process multiple images in a single invocation
+- Example: `./decoded-imagesize image1.png image2.jpg image3.webp`
+
+**Directory Processing** (`-dir` flag):
+- Process all supported images in a directory
+- Use `-recursive` flag to process subdirectories
+- Example: `./decoded-imagesize -dir /path/to/images -recursive`
+
+**Parallel Processing** (`-workers` flag):
+- Control the number of concurrent workers
+- Default: Number of CPU cores
+- Example: `./decoded-imagesize -workers 4 -dir /path/to/images`
+
+**Batch Output Features**:
+- Summary statistics (total files, success/failure counts)
+- Aggregated metrics (total sizes, average compression ratio)
+- Individual file results with filenames
+- Error reporting for failed files
+
 ### Exit Codes
 
 The tool returns standardized exit codes for scripting:
@@ -149,6 +234,7 @@ The tool returns standardized exit codes for scripting:
 - `2` - File not found
 - `3` - Invalid or unsupported image format
 - `4` - Processing error
+- `5` - Partial success (some files failed in batch mode)
 
 Exit codes are included in JSON error output when using `-json` flag.
 
@@ -159,13 +245,14 @@ case $? in
   0) echo "Success" ;;
   2) echo "File not found" ;;
   3) echo "Invalid format" ;;
+  5) echo "Some files failed" ;;
   *) echo "Error occurred" ;;
 esac
 ```
 
 ### Example Output
 
-#### PNG with 16-bit RGB and ICC Profile
+#### Single File - PNG with 16-bit RGB and ICC Profile
 ```
 Format: png
 Dimensions: 2000x1500
@@ -182,7 +269,35 @@ Estimated decoded size: 24000000 bytes (22.89 MB)
 Compression ratio: 419.2x
 ```
 
-#### JPEG with YCbCr Subsampling
+#### Batch Mode - Multiple Files
+```
+=== Batch Processing Summary ===
+Total files: 3
+Successful: 3
+Failed: 0
+Total original size: 0.01 MB
+Total decoded size: 0.32 MB
+Average compression ratio: 137.5x
+
+=== Processed Images ===
+
+File: test_batch/image1.png
+  Format: png | Dimensions: 100x100
+  Color Model: RGB | Color Space: sRGB | Bit Depth: 8
+  Original: 0.00 MB | Decoded: 0.04 MB | Ratio: 123.5x
+
+File: test_batch/image2.png
+  Format: png | Dimensions: 200x150
+  Color Model: RGB | Color Space: sRGB | Bit Depth: 8
+  Original: 0.00 MB | Decoded: 0.11 MB | Ratio: 254.8x
+
+File: test_batch/image3.jpg
+  Format: jpeg | Dimensions: 300x200
+  Color Model: YCbCr | Color Space: sRGB | Bit Depth: 8
+  Original: 0.01 MB | Decoded: 0.17 MB | Ratio: 34.2x
+```
+
+#### Single File - JPEG with YCbCr Subsampling
 ```
 Format: jpeg
 Dimensions: 4000x3000
@@ -199,7 +314,7 @@ Estimated decoded size: 36000000 bytes (34.33 MB)
 Compression ratio: 44.5x
 ```
 
-#### HEIF with HDR Support
+#### Single File - HEIF with HDR Support
 ```
 Format: heif
 Dimensions: 3840x2160
@@ -216,7 +331,7 @@ Estimated decoded size: 24883200 bytes (23.73 MB)
 Compression ratio: 20.0x
 ```
 
-#### AVIF with Alpha Channel
+#### Single File - AVIF with Alpha Channel
 ```
 Format: avif
 Dimensions: 1920x1080
@@ -233,7 +348,7 @@ Estimated decoded size: 6220800 bytes (5.93 MB)
 Compression ratio: 136.2x
 ```
 
-#### WebP Lossless
+#### Single File - WebP Lossless
 ```
 Format: webp
 Dimensions: 1000x1000
@@ -365,9 +480,11 @@ $ trivy fs --scanners vuln .
 
 ### Performance Optimization
 - **Batch processing**: Calculate total memory needed before starting
+- **Parallel processing**: Process multiple images concurrently with configurable workers
 - **Memory-aware scheduling**: Prioritize small images when memory is limited
 - **Cache sizing**: Determine optimal image cache sizes
 - **Format selection**: Choose best format based on memory constraints
+- **Directory scanning**: Process entire directories efficiently
 
 ### Examples
 
@@ -377,6 +494,15 @@ size, err := estimateDecodedSize("upload.jpg")
 if size > availableRAM {
     return errors.New("insufficient memory")
 }
+```
+
+**Process batch of images**:
+```bash
+# Get total memory requirement for all images
+./decoded-imagesize -json -dir uploads/ | jq '.summary.total_decoded_size_mb'
+
+# Process directory with 8 workers
+./decoded-imagesize -workers 8 -dir images/
 ```
 
 **Compare format efficiency**:
@@ -392,6 +518,15 @@ Compression ratio: 231.1x
 ```bash
 $ ./decoded-imagesize hdr_photo.heic | grep HDR
 HDR Support: PQ (Perceptual Quantizer)
+```
+
+**Batch processing with error handling**:
+```bash
+./decoded-imagesize -json -dir /path/to/images > results.json
+if [ $? -eq 5 ]; then
+  echo "Some files failed, check errors in results.json"
+  jq '.errors' results.json
+fi
 ```
 
 ## License
