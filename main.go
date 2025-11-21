@@ -295,24 +295,229 @@ func analyzeWebP(r io.ReadSeeker, config image.Config, info *ImageInfo) {
 	info.ColorSpace = ColorSpaceSRGB
 }
 
+type heifMetadata struct {
+	ColorModel        ColorModel
+	HasAlpha          bool
+	BitDepth          int
+	ColorSpace        ColorSpace
+	ChromaSubsampling ChromaSubsampling
+	HDRType           HDRType
+}
+
+func parseHEIFMetadata(r io.ReadSeeker) heifMetadata {
+	meta := heifMetadata{
+		ColorModel:        ColorModelYCbCr,
+		HasAlpha:          false,
+		BitDepth:          8,
+		ColorSpace:        ColorSpaceBT709,
+		ChromaSubsampling: ChromaSubsampling420,
+		HDRType:           HDRNone,
+	}
+
+	_, _ = r.Seek(0, 0)
+	data := make([]byte, 16384)
+	n, _ := r.Read(data)
+	if n < 12 {
+		return meta
+	}
+	data = data[:n]
+
+	if string(data[4:8]) != "ftyp" {
+		return meta
+	}
+
+	offset := 0
+	for offset+8 < len(data) {
+		if offset+4 > len(data) {
+			break
+		}
+
+		boxSize := binary.BigEndian.Uint32(data[offset : offset+4])
+		if boxSize == 0 || boxSize < 8 {
+			break
+		}
+
+		if offset+8 > len(data) {
+			break
+		}
+
+		boxType := string(data[offset+4 : offset+8])
+
+		if int(boxSize) > len(data)-offset {
+			boxSize = uint32(len(data) - offset)
+		}
+
+		boxData := data[offset+8 : offset+int(boxSize)]
+
+		switch boxType {
+		case "meta":
+			parseMetaBox(boxData, &meta)
+
+		case "pixi":
+			if len(boxData) >= 3 {
+				meta.BitDepth = int(boxData[2])
+			}
+
+		case "colr":
+			if len(boxData) >= 4 {
+				colorType := string(boxData[0:4])
+				if colorType == "nclx" && len(boxData) >= 8 {
+					colorPrimaries := binary.BigEndian.Uint16(boxData[4:6])
+					transferChar := binary.BigEndian.Uint16(boxData[6:8])
+
+					switch colorPrimaries {
+					case 1:
+						meta.ColorSpace = ColorSpaceBT709
+					case 9:
+						meta.ColorSpace = ColorSpaceBT2020
+					case 12:
+						meta.ColorSpace = ColorSpaceDisplayP3
+					}
+
+					switch transferChar {
+					case 16:
+						meta.HDRType = HDRPQ
+					case 18:
+						meta.HDRType = HDRHLG
+					}
+				}
+			}
+
+		case "auxC":
+			if bytes.Contains(boxData, []byte("urn:mpeg:mpegB:cicp:systems:auxiliary:alpha")) {
+				meta.HasAlpha = true
+			}
+		}
+
+		offset += int(boxSize)
+	}
+
+	return meta
+}
+
+func parseMetaBox(data []byte, meta *heifMetadata) {
+	offset := 4
+
+	for offset+8 < len(data) {
+		boxSize := binary.BigEndian.Uint32(data[offset : offset+4])
+		boxType := string(data[offset+4 : offset+8])
+
+		if boxSize < 8 || offset+int(boxSize) > len(data) {
+			break
+		}
+
+		switch boxType {
+		case "iprp":
+			parseIprpBox(data[offset+8:offset+int(boxSize)], meta)
+		}
+
+		offset += int(boxSize)
+	}
+}
+
+func parseIprpBox(data []byte, meta *heifMetadata) {
+	offset := 0
+
+	for offset+8 < len(data) {
+		boxSize := binary.BigEndian.Uint32(data[offset : offset+4])
+		boxType := string(data[offset+4 : offset+8])
+
+		if boxSize < 8 || offset+int(boxSize) > len(data) {
+			break
+		}
+
+		boxData := data[offset+8 : offset+int(boxSize)]
+
+		switch boxType {
+		case "ipco":
+			parseIpcoBox(boxData, meta)
+		}
+
+		offset += int(boxSize)
+	}
+}
+
+func parseIpcoBox(data []byte, meta *heifMetadata) {
+	offset := 0
+
+	for offset+8 < len(data) {
+		boxSize := binary.BigEndian.Uint32(data[offset : offset+4])
+		boxType := string(data[offset+4 : offset+8])
+
+		if boxSize < 8 || offset+int(boxSize) > len(data) {
+			break
+		}
+
+		boxData := data[offset+8 : offset+int(boxSize)]
+
+		switch boxType {
+		case "pixi":
+			if len(boxData) >= 6 {
+				numChannels := int(boxData[4])
+				if numChannels > 0 && len(boxData) >= 5+numChannels {
+					meta.BitDepth = int(boxData[5])
+				}
+			}
+
+		case "colr":
+			if len(boxData) >= 4 {
+				colorType := string(boxData[0:4])
+				if colorType == "nclx" && len(boxData) >= 8 {
+					colorPrimaries := binary.BigEndian.Uint16(boxData[4:6])
+					transferChar := binary.BigEndian.Uint16(boxData[6:8])
+
+					switch colorPrimaries {
+					case 1:
+						meta.ColorSpace = ColorSpaceBT709
+					case 9:
+						meta.ColorSpace = ColorSpaceBT2020
+					case 12:
+						meta.ColorSpace = ColorSpaceDisplayP3
+					}
+
+					switch transferChar {
+					case 16:
+						meta.HDRType = HDRPQ
+					case 18:
+						meta.HDRType = HDRHLG
+					}
+				}
+			}
+
+		case "auxC":
+			if bytes.Contains(boxData, []byte("urn:mpeg:mpegB:cicp:systems:auxiliary:alpha")) {
+				meta.HasAlpha = true
+			}
+		}
+
+		offset += int(boxSize)
+	}
+}
+
 func analyzeHEIF(r io.ReadSeeker, config image.Config, info *ImageInfo) {
-	info.ColorModel = ColorModelYCbCr
-	info.HasAlpha = false
 	info.CompressionType = CompressionHybrid
-	info.BitDepth = 8
-	info.ColorSpace = ColorSpaceBT709
-	info.ChromaSubsampling = ChromaSubsampling420
-	info.HDRType = HDRNone
+
+	metadata := parseHEIFMetadata(r)
+
+	info.ColorModel = metadata.ColorModel
+	info.HasAlpha = metadata.HasAlpha
+	info.BitDepth = metadata.BitDepth
+	info.ColorSpace = metadata.ColorSpace
+	info.ChromaSubsampling = metadata.ChromaSubsampling
+	info.HDRType = metadata.HDRType
 }
 
 func analyzeAVIF(r io.ReadSeeker, config image.Config, info *ImageInfo) {
-	info.ColorModel = ColorModelYCbCr
-	info.HasAlpha = false
 	info.CompressionType = CompressionHybrid
-	info.BitDepth = 8
-	info.ColorSpace = ColorSpaceBT709
-	info.ChromaSubsampling = ChromaSubsampling420
-	info.HDRType = HDRNone
+
+	metadata := parseHEIFMetadata(r)
+
+	info.ColorModel = metadata.ColorModel
+	info.HasAlpha = metadata.HasAlpha
+	info.BitDepth = metadata.BitDepth
+	info.ColorSpace = metadata.ColorSpace
+	info.ChromaSubsampling = metadata.ChromaSubsampling
+	info.HDRType = metadata.HDRType
 }
 
 func parseColorSpace(cs string) ColorSpace {
@@ -354,13 +559,14 @@ func detectWebPFormat(r io.ReadSeeker) (bool, ChromaSubsampling) {
 	}
 
 	fourCC := string(chunkHeader)
-	if fourCC == "VP8L" {
+	switch fourCC {
+	case "VP8L":
 		return true, ChromaSubsamplingNA
-	} else if fourCC == "VP8 " {
+	case "VP8 ":
 		return false, ChromaSubsampling420
+	default:
+		return false, ChromaSubsamplingUnknown
 	}
-
-	return false, ChromaSubsamplingUnknown
 }
 
 func estimateDecodedSize(filename string) (int64, error) {
@@ -684,13 +890,6 @@ func detectPNGBitDepth(r io.ReadSeeker) int {
 
 	bitDepth := int(ihdr[8])
 	return bitDepth
-}
-
-func detectHEIFColorSpace(format string) string {
-	if format == "heif" {
-		return "BT.709"
-	}
-	return "BT.709"
 }
 
 func main() {
