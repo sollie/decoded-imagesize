@@ -3471,3 +3471,48 @@ func TestEstimateDecodedSize_WithICCProfile(t *testing.T) {
 		}
 	})
 }
+
+func TestParseIprpBox_MalformedData(t *testing.T) {
+	t.Run("BoxSizeTooSmall", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+		buf.WriteString("ipco")
+
+		meta := &heifMetadata{BitDepth: 8, ColorSpace: ColorSpaceBT709}
+		parseIprpBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected BitDepth unchanged at 8, got %d", meta.BitDepth)
+		}
+	})
+
+	t.Run("BoxSizeExceedsData", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(1000))
+		buf.WriteString("ipco")
+		buf.Write([]byte("short"))
+
+		meta := &heifMetadata{BitDepth: 8, ColorSpace: ColorSpaceBT709}
+		parseIprpBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected BitDepth unchanged at 8, got %d", meta.BitDepth)
+		}
+	})
+
+	t.Run("ValidIpcoBox", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		ipcoSize := uint32(20)
+		_ = binary.Write(&buf, binary.BigEndian, ipcoSize)
+		buf.WriteString("ipco")
+		buf.Write(make([]byte, int(ipcoSize)-8))
+
+		meta := &heifMetadata{BitDepth: 8, ColorSpace: ColorSpaceBT709}
+		parseIprpBox(buf.Bytes(), meta)
+
+		t.Logf("Parsed iprp box successfully")
+	})
+}
