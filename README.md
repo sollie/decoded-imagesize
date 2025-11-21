@@ -67,15 +67,54 @@ A detailed comparison of supported image format characteristics:
 ## Installation
 
 ```bash
-go get github.com/chai2010/webp
-go get github.com/strukturag/libheif/go/heif
+git clone <repository-url>
+cd decoded-imagesize
+go mod tidy
 go build
 ```
 
 ## Usage
 
+### Basic Usage
+
 ```bash
+# Human-readable output
 ./decoded-imagesize <image-file>
+
+# JSON output for scripting
+./decoded-imagesize -json <image-file>
+```
+
+### Examples
+
+**Normal output:**
+```bash
+./decoded-imagesize image.png
+```
+
+**JSON output:**
+```bash
+./decoded-imagesize -json image.png
+```
+
+Output:
+```json
+{
+  "format": "png",
+  "width": 2000,
+  "height": 1500,
+  "color_model": "RGB",
+  "color_space": "sRGB",
+  "bit_depth": 16,
+  "has_alpha": true,
+  "has_icc_profile": false,
+  "hdr_type": "Limited",
+  "chroma_subsampling": "N/A",
+  "compression_type": "Lossless",
+  "original_size_bytes": 57254,
+  "decoded_size_bytes": 24000000,
+  "compression_ratio": 419.2
+}
 ```
 
 ### Example Output

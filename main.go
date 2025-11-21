@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
+	"flag"
 	"fmt"
 	"image"
 	"image/color"
@@ -40,6 +42,10 @@ func (cm ColorModel) String() string {
 	}
 }
 
+func (cm ColorModel) MarshalJSON() ([]byte, error) {
+	return json.Marshal(cm.String())
+}
+
 type ColorSpace int
 
 const (
@@ -68,6 +74,10 @@ func (cs ColorSpace) String() string {
 	}
 }
 
+func (cs ColorSpace) MarshalJSON() ([]byte, error) {
+	return json.Marshal(cs.String())
+}
+
 type HDRType int
 
 const (
@@ -90,6 +100,10 @@ func (h HDRType) String() string {
 	default:
 		return "Unknown"
 	}
+}
+
+func (h HDRType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(h.String())
 }
 
 type ChromaSubsampling int
@@ -117,6 +131,10 @@ func (cs ChromaSubsampling) String() string {
 	}
 }
 
+func (cs ChromaSubsampling) MarshalJSON() ([]byte, error) {
+	return json.Marshal(cs.String())
+}
+
 type CompressionType int
 
 const (
@@ -139,19 +157,26 @@ func (ct CompressionType) String() string {
 	}
 }
 
+func (ct CompressionType) MarshalJSON() ([]byte, error) {
+	return json.Marshal(ct.String())
+}
+
 type ImageInfo struct {
-	Format            string
-	Width             int
-	Height            int
-	ColorModel        ColorModel
-	ColorSpace        ColorSpace
-	BitDepth          int
-	HasAlpha          bool
-	HasICCProfile     bool
-	ICCProfileSize    int
-	HDRType           HDRType
-	ChromaSubsampling ChromaSubsampling
-	CompressionType   CompressionType
+	Format            string            `json:"format"`
+	Width             int               `json:"width"`
+	Height            int               `json:"height"`
+	ColorModel        ColorModel        `json:"color_model"`
+	ColorSpace        ColorSpace        `json:"color_space"`
+	BitDepth          int               `json:"bit_depth"`
+	HasAlpha          bool              `json:"has_alpha"`
+	HasICCProfile     bool              `json:"has_icc_profile"`
+	ICCProfileSize    int               `json:"icc_profile_size,omitempty"`
+	HDRType           HDRType           `json:"hdr_type"`
+	ChromaSubsampling ChromaSubsampling `json:"chroma_subsampling"`
+	CompressionType   CompressionType   `json:"compression_type"`
+	OriginalSize      int64             `json:"original_size_bytes"`
+	DecodedSize       int64             `json:"decoded_size_bytes"`
+	CompressionRatio  float64           `json:"compression_ratio"`
 }
 
 func analyzeImage(filename string) (*ImageInfo, error) {
@@ -573,43 +598,55 @@ func detectWebPFormat(r io.ReadSeeker) (bool, ChromaSubsampling) {
 	}
 }
 
-func estimateDecodedSize(filename string) (int64, error) {
+func estimateDecodedSize(filename string, jsonOutput bool) (*ImageInfo, error) {
 	info, err := analyzeImage(filename)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 
 	fileInfo, err := os.Stat(filename)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	originalSize := fileInfo.Size()
 
 	bytesPerPixel := calculateBytesPerPixel(info)
 	decodedSize := int64(info.Width) * int64(info.Height) * int64(bytesPerPixel)
 
-	fmt.Printf("Format: %s\n", info.Format)
-	fmt.Printf("Dimensions: %dx%d\n", info.Width, info.Height)
-	fmt.Printf("Color Model: %s\n", info.ColorModel)
-	if info.HasICCProfile {
-		fmt.Printf("ICC Profile: Present (%d bytes)\n", info.ICCProfileSize)
-	} else {
-		fmt.Printf("ICC Profile: Not detected\n")
-	}
-	fmt.Printf("Color Space: %s\n", info.ColorSpace)
-	fmt.Printf("Bit Depth: %d\n", info.BitDepth)
-	fmt.Printf("Alpha Channel: %v\n", info.HasAlpha)
-	fmt.Printf("Chroma Subsampling: %s\n", info.ChromaSubsampling)
-	fmt.Printf("HDR Support: %s\n", info.HDRType)
-	fmt.Printf("Compression Type: %s\n", info.CompressionType)
-	fmt.Printf("Original file size: %d bytes (%.2f MB)\n",
-		originalSize, float64(originalSize)/(1024*1024))
-	fmt.Printf("Estimated decoded size: %d bytes (%.2f MB)\n",
-		decodedSize, float64(decodedSize)/(1024*1024))
-	fmt.Printf("Compression ratio: %.1fx\n",
-		float64(decodedSize)/float64(originalSize))
+	info.OriginalSize = originalSize
+	info.DecodedSize = decodedSize
+	info.CompressionRatio = float64(decodedSize) / float64(originalSize)
 
-	return decodedSize, nil
+	if jsonOutput {
+		encoder := json.NewEncoder(os.Stdout)
+		encoder.SetIndent("", "  ")
+		if err := encoder.Encode(info); err != nil {
+			return nil, err
+		}
+	} else {
+		fmt.Printf("Format: %s\n", info.Format)
+		fmt.Printf("Dimensions: %dx%d\n", info.Width, info.Height)
+		fmt.Printf("Color Model: %s\n", info.ColorModel)
+		if info.HasICCProfile {
+			fmt.Printf("ICC Profile: Present (%d bytes)\n", info.ICCProfileSize)
+		} else {
+			fmt.Printf("ICC Profile: Not detected\n")
+		}
+		fmt.Printf("Color Space: %s\n", info.ColorSpace)
+		fmt.Printf("Bit Depth: %d\n", info.BitDepth)
+		fmt.Printf("Alpha Channel: %v\n", info.HasAlpha)
+		fmt.Printf("Chroma Subsampling: %s\n", info.ChromaSubsampling)
+		fmt.Printf("HDR Support: %s\n", info.HDRType)
+		fmt.Printf("Compression Type: %s\n", info.CompressionType)
+		fmt.Printf("Original file size: %d bytes (%.2f MB)\n",
+			originalSize, float64(originalSize)/(1024*1024))
+		fmt.Printf("Estimated decoded size: %d bytes (%.2f MB)\n",
+			decodedSize, float64(decodedSize)/(1024*1024))
+		fmt.Printf("Compression ratio: %.1fx\n",
+			float64(decodedSize)/float64(originalSize))
+	}
+
+	return info, nil
 }
 
 func calculateBytesPerPixel(info *ImageInfo) int {
@@ -897,17 +934,27 @@ func detectPNGBitDepth(r io.ReadSeeker) int {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: decoded-imagesize <image-file>")
+	jsonOutput := flag.Bool("json", false, "Output in JSON format")
+	flag.Parse()
+
+	if flag.NArg() < 1 {
+		fmt.Println("Usage: decoded-imagesize [-json] <image-file>")
 		fmt.Println("Supported formats: PNG, JPEG, HEIF/HEIC, AVIF, WebP")
+		fmt.Println("\nFlags:")
+		fmt.Println("  -json    Output in JSON format")
 		os.Exit(1)
 	}
 
-	filename := os.Args[1]
+	filename := flag.Arg(0)
 
-	_, err := estimateDecodedSize(filename)
+	_, err := estimateDecodedSize(filename, *jsonOutput)
 	if err != nil {
-		fmt.Println("Error:", err)
-		return
+		if *jsonOutput {
+			errJSON, _ := json.Marshal(map[string]string{"error": err.Error()})
+			fmt.Println(string(errJSON))
+		} else {
+			fmt.Println("Error:", err)
+		}
+		os.Exit(1)
 	}
 }
