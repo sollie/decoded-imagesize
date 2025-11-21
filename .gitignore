@@ -1,2 +1,3 @@
 decoded-imagesize
-coverage.out
+coverage*
+test/**
