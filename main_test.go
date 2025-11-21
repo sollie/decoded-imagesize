@@ -2520,3 +2520,232 @@ func createJPEGWithSOFMarker(sofMarker, precision uint8, numComponents int, widt
 
 	return buf.Bytes()
 }
+
+func TestDetectPNGBitDepth_EdgeCases(t *testing.T) {
+	t.Run("TruncatedAfterSignature", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		reader := bytes.NewReader(buf.Bytes())
+
+		bitDepth := detectPNGBitDepth(reader)
+		if bitDepth != 8 {
+			t.Errorf("Expected default 8, got %d", bitDepth)
+		}
+	})
+
+	t.Run("InvalidIHDRChunkType", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(13))
+		buf.Write([]byte("IXXX"))
+		reader := bytes.NewReader(buf.Bytes())
+
+		bitDepth := detectPNGBitDepth(reader)
+		if bitDepth != 8 {
+			t.Errorf("Expected default 8, got %d", bitDepth)
+		}
+	})
+
+	t.Run("InvalidIHDRLength", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(10))
+		buf.Write([]byte("IHDR"))
+		reader := bytes.NewReader(buf.Bytes())
+
+		bitDepth := detectPNGBitDepth(reader)
+		if bitDepth != 8 {
+			t.Errorf("Expected default 8, got %d", bitDepth)
+		}
+	})
+
+	t.Run("TruncatedIHDRData", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(13))
+		buf.Write([]byte("IHDR"))
+		buf.Write([]byte{0, 0, 0, 100})
+		reader := bytes.NewReader(buf.Bytes())
+
+		bitDepth := detectPNGBitDepth(reader)
+		if bitDepth != 8 {
+			t.Errorf("Expected default 8, got %d", bitDepth)
+		}
+	})
+
+	t.Run("ValidIHDR_16bit", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(13))
+		buf.Write([]byte("IHDR"))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(100))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(100))
+		buf.WriteByte(16)
+		buf.WriteByte(6)
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+
+		reader := bytes.NewReader(buf.Bytes())
+		bitDepth := detectPNGBitDepth(reader)
+		if bitDepth != 16 {
+			t.Errorf("Expected 16, got %d", bitDepth)
+		}
+	})
+
+	t.Run("ValidIHDR_4bit", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(13))
+		buf.Write([]byte("IHDR"))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(100))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(100))
+		buf.WriteByte(4)
+		buf.WriteByte(3)
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+
+		reader := bytes.NewReader(buf.Bytes())
+		bitDepth := detectPNGBitDepth(reader)
+		if bitDepth != 4 {
+			t.Errorf("Expected 4, got %d", bitDepth)
+		}
+	})
+}
+
+func TestDetectPNGICCProfile_EdgeCases(t *testing.T) {
+	t.Run("TruncatedAfterSignature", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		reader := bytes.NewReader(buf.Bytes())
+
+		iccData, colorSpace := detectPNGICCProfile(reader)
+		if iccData != nil {
+			t.Error("Expected nil ICC data")
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("Expected sRGB, got %s", colorSpace)
+		}
+	})
+
+	t.Run("ReachesIEND_NoICC", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(13))
+		buf.Write([]byte("IHDR"))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(100))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(100))
+		buf.WriteByte(8)
+		buf.WriteByte(6)
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+		buf.Write([]byte("IEND"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		iccData, colorSpace := detectPNGICCProfile(reader)
+		if iccData != nil {
+			t.Error("Expected nil ICC data")
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("Expected sRGB, got %s", colorSpace)
+		}
+	})
+
+	t.Run("SkipsNonICCPChunks", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+		buf.Write([]byte("gAMA"))
+		buf.Write([]byte{0, 0, 177, 143})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+		buf.Write([]byte("IEND"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		iccData, colorSpace := detectPNGICCProfile(reader)
+		if iccData != nil {
+			t.Error("Expected nil ICC data")
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("Expected sRGB, got %s", colorSpace)
+		}
+	})
+
+	t.Run("ICCPChunk_TruncatedData", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(100))
+		buf.Write([]byte("iCCP"))
+		buf.Write([]byte("profile\x00"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		iccData, colorSpace := detectPNGICCProfile(reader)
+		if iccData != nil {
+			t.Error("Expected nil ICC data on truncated iCCP")
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("Expected sRGB, got %s", colorSpace)
+		}
+	})
+
+	t.Run("ICCPChunk_ValidData", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+
+		iccProfile := []byte("fake-icc-profile-data-here")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(len(iccProfile)))
+		buf.Write([]byte("iCCP"))
+		buf.Write(iccProfile)
+
+		reader := bytes.NewReader(buf.Bytes())
+		iccData, colorSpace := detectPNGICCProfile(reader)
+		if iccData == nil {
+			t.Error("Expected ICC data")
+		}
+		if len(iccData) != len(iccProfile) {
+			t.Errorf("ICC data length mismatch: got %d, want %d", len(iccData), len(iccProfile))
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("Expected sRGB (detectColorSpaceFromICC default), got %s", colorSpace)
+		}
+	})
+
+	t.Run("MultipleChunks_FindsICC", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A})
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(13))
+		buf.Write([]byte("IHDR"))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(100))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(100))
+		buf.WriteByte(8)
+		buf.WriteByte(6)
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+		buf.WriteByte(0)
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+		buf.Write([]byte("gAMA"))
+		buf.Write([]byte{0, 0, 177, 143})
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+
+		iccProfile := []byte("test-icc")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(len(iccProfile)))
+		buf.Write([]byte("iCCP"))
+		buf.Write(iccProfile)
+
+		reader := bytes.NewReader(buf.Bytes())
+		iccData, _ := detectPNGICCProfile(reader)
+		if iccData == nil {
+			t.Error("Expected ICC data after skipping other chunks")
+		}
+		if len(iccData) != len(iccProfile) {
+			t.Errorf("ICC data length mismatch: got %d, want %d", len(iccData), len(iccProfile))
+		}
+	})
+}
