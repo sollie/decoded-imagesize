@@ -15,7 +15,7 @@ A detailed comparison of supported image format characteristics:
 | **Bit Depth** | 1, 2, 4, 8, 16 | 8, 12 | 8, 10, 12 | 8, 10, 12 | 8 |
 | **Alpha Channel** | ✓ | ✗ | ✓ | ✓ | ✓ |
 | **Chroma Subsampling** | N/A | 4:4:4, 4:2:2, 4:2:0 | 4:4:4, 4:2:2, 4:2:0 | 4:4:4, 4:2:2, 4:2:0 | 4:2:0 |
-| **HDR Support** | ✗ | ✗ | ✓ (PQ, HLG) | ✓ (PQ, HLG) | ✗ |
+| **HDR Support** | Limited (16-bit) | ✗ | ✓ (PQ, HLG) | ✓ (PQ, HLG) | ✗ |
 | **Compression** | Lossless | Lossy | Lossy/Lossless | Lossy/Lossless | Lossy/Lossless |
 | **Max Resolution** | Unlimited | 65535×65535 | Unlimited | Unlimited | 16383×16383 |
 | **Typical Use Cases** | Web graphics, screenshots | Photography, web images | Mobile photos, HDR | Next-gen web, HDR | Web images, transparency |
@@ -37,14 +37,17 @@ A detailed comparison of supported image format characteristics:
 - **Adobe RGB**: PNG/JPEG (via ICC)
 
 #### Bit Depth Detection
-- **PNG**: Accurately detects 1, 2, 4, 8, 16 bits per channel
+- **PNG**: Accurately detects 1, 2, 4, 8, 16 bits per channel (16-bit marked as Limited HDR)
 - **JPEG**: Detects 8-bit (baseline) and 12-bit (extended)
 - **HEIF/AVIF**: Parses `pixi` box for 8, 10, 12-bit detection
 - **WebP**: Always 8-bit
 
 #### HDR Detection
+- **PNG**: Reports 16-bit images as "Limited" HDR (extended dynamic range without HDR metadata)
 - **HEIF/AVIF**: Detects PQ (SMPTE ST 2084) and HLG (ARIB STD-B67) transfer functions
-- **Detection method**: Parses `colr` box transfer characteristics in HEIF/AVIF
+- **Detection method**: 
+  - PNG: Checks bit depth from IHDR chunk
+  - HEIF/AVIF: Parses `colr` box transfer characteristics
 
 #### Chroma Subsampling Detection
 - **JPEG**: Analyzes SOF (Start of Frame) markers for Y, Cb, Cr sampling factors
@@ -87,7 +90,7 @@ Color Space: Display P3
 Bit Depth: 16
 Alpha Channel: true
 Chroma Subsampling: N/A
-HDR Support: None
+HDR Support: Limited
 Compression Type: Lossless
 Original file size: 57254 bytes (0.05 MB)
 Estimated decoded size: 24000000 bytes (22.89 MB)
