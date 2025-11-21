@@ -3152,3 +3152,240 @@ func TestAnalyzeJPEG_WithICCProfile(t *testing.T) {
 		}
 	})
 }
+
+func TestParseMetaBox_EdgeCases(t *testing.T) {
+	t.Run("InvalidBoxSize_TooSmall", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+		buf.Write([]byte("iprp"))
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseMetaBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Error("Metadata should remain unchanged with invalid box")
+		}
+	})
+
+	t.Run("InvalidBoxSize_Overflow", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+		_ = binary.Write(&buf, binary.BigEndian, uint32(1000))
+		buf.Write([]byte("iprp"))
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseMetaBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Error("Metadata should remain unchanged with overflow box")
+		}
+	})
+
+	t.Run("IprpBox_Valid", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+
+		var iprpBuf bytes.Buffer
+		_ = binary.Write(&iprpBuf, binary.BigEndian, uint32(12))
+		iprpBuf.Write([]byte("iprp"))
+		iprpBuf.Write([]byte{0, 0, 0, 0})
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+iprpBuf.Len()))
+		buf.Write([]byte("iprp"))
+		buf.Write(iprpBuf.Bytes())
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseMetaBox(buf.Bytes(), meta)
+	})
+}
+
+func TestParseIprpBox_EdgeCases(t *testing.T) {
+	t.Run("InvalidBoxSize_TooSmall", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+		buf.Write([]byte("ipco"))
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseIprpBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Error("Metadata should remain unchanged with invalid box")
+		}
+	})
+
+	t.Run("InvalidBoxSize_Overflow", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = binary.Write(&buf, binary.BigEndian, uint32(1000))
+		buf.Write([]byte("ipco"))
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseIprpBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Error("Metadata should remain unchanged with overflow box")
+		}
+	})
+
+	t.Run("IpcoBox_Valid", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		var ipcoBuf bytes.Buffer
+		pixiData := []byte{0, 1, 10}
+		_ = binary.Write(&ipcoBuf, binary.BigEndian, uint32(8+len(pixiData)))
+		ipcoBuf.Write([]byte("pixi"))
+		ipcoBuf.Write(pixiData)
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+ipcoBuf.Len()))
+		buf.Write([]byte("ipco"))
+		buf.Write(ipcoBuf.Bytes())
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseIprpBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 10 {
+			t.Errorf("Expected BitDepth 10, got %d", meta.BitDepth)
+		}
+	})
+}
+
+func TestParseIpcoBox_EdgeCases(t *testing.T) {
+	t.Run("InvalidBoxSize_TooSmall", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+		buf.Write([]byte("pixi"))
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseIpcoBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Error("Metadata should remain unchanged with invalid box")
+		}
+	})
+
+	t.Run("InvalidBoxSize_Overflow", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = binary.Write(&buf, binary.BigEndian, uint32(1000))
+		buf.Write([]byte("pixi"))
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseIpcoBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Error("Metadata should remain unchanged with overflow box")
+		}
+	})
+
+	t.Run("PixiBox_ZeroChannels", func(t *testing.T) {
+		var buf bytes.Buffer
+		pixiData := []byte{0, 0, 10}
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+len(pixiData)))
+		buf.Write([]byte("pixi"))
+		buf.Write(pixiData)
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseIpcoBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Error("BitDepth should remain 8 with zero channels")
+		}
+	})
+
+	t.Run("PixiBox_InsufficientData", func(t *testing.T) {
+		var buf bytes.Buffer
+		pixiData := []byte{0, 3}
+		_ = binary.Write(&buf, binary.BigEndian, uint32(8+len(pixiData)))
+		buf.Write([]byte("pixi"))
+		buf.Write(pixiData)
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseIpcoBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Error("BitDepth should remain 8 with insufficient data")
+		}
+	})
+
+	t.Run("UnknownBoxType", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = binary.Write(&buf, binary.BigEndian, uint32(12))
+		buf.Write([]byte("unkn"))
+		buf.Write([]byte{0, 0, 0, 0})
+
+		meta := &heifMetadata{BitDepth: 8}
+		parseIpcoBox(buf.Bytes(), meta)
+
+		if meta.BitDepth != 8 {
+			t.Error("Metadata should remain unchanged with unknown box")
+		}
+	})
+}
+
+func TestParseHEIFMetadata_RemainingCases(t *testing.T) {
+	t.Run("BoundsCheck_Offset4", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		buf.Write([]byte{0, 0, 0, 20})
+		buf.Write([]byte("test"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected default BitDepth 8, got %d", meta.BitDepth)
+		}
+	})
+
+	t.Run("BoundsCheck_Offset8", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0, 0, 0, 16})
+		buf.Write([]byte("ftyp"))
+		buf.Write([]byte("heicheic"))
+
+		buf.Write([]byte{0, 0, 0, 12})
+		buf.Write([]byte("test"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		meta := parseHEIFMetadata(reader)
+
+		if meta.BitDepth != 8 {
+			t.Errorf("Expected default BitDepth 8, got %d", meta.BitDepth)
+		}
+	})
+}
+
+func TestEstimateDecodedSize_WithICCProfile(t *testing.T) {
+	t.Run("PNG_WithICCProfile", func(t *testing.T) {
+		img := image.NewRGBA(image.Rect(0, 0, 100, 100))
+		for y := 0; y < 100; y++ {
+			for x := 0; x < 100; x++ {
+				img.Set(x, y, color.RGBA{R: uint8(x), G: uint8(y), B: 0, A: 255})
+			}
+		}
+
+		tmpfile, err := os.CreateTemp("", "test_png_icc_*.png")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Remove(tmpfile.Name()) }()
+
+		if err := png.Encode(tmpfile, img); err != nil {
+			t.Fatal(err)
+		}
+		if err := tmpfile.Close(); err != nil {
+			t.Fatal(err)
+		}
+
+		size, err := estimateDecodedSize(tmpfile.Name())
+		if err != nil {
+			t.Fatalf("Failed to estimate decoded size: %v", err)
+		}
+
+		if size != 40000 {
+			t.Errorf("Expected 40000 bytes, got %d", size)
+		}
+	})
+}
