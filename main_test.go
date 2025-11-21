@@ -2214,3 +2214,309 @@ func TestCalculateBytesPerPixel(t *testing.T) {
 		})
 	}
 }
+
+func TestAnalyzeJPEG_GrayscaleAndUnknown(t *testing.T) {
+	t.Run("Grayscale_JPEG_1Component", func(t *testing.T) {
+		jpegData := createGrayscaleJPEG(100, 100, 8)
+		reader := bytes.NewReader(jpegData)
+
+		subsampling := detectJPEGSubsampling(reader)
+		if subsampling != "Grayscale" {
+			t.Errorf("Subsampling: got=%s, want=Grayscale", subsampling)
+		}
+	})
+
+	t.Run("CustomSubsampling_Unknown", func(t *testing.T) {
+		jpegData := createCustomSubsamplingJPEG(100, 100, 3, 3, 1, 1, 8)
+		reader := bytes.NewReader(jpegData)
+
+		subsampling := detectJPEGSubsampling(reader)
+		expected := "Custom (3x3:1x1)"
+		if subsampling != expected {
+			t.Errorf("Subsampling: got=%s, want=%s", subsampling, expected)
+		}
+	})
+
+	t.Run("NoICCProfile_DefaultsToSRGB", func(t *testing.T) {
+		jpegData := createMinimalJPEGData(100, 100, 2, 2, 1, 1, 8)
+		reader := bytes.NewReader(jpegData)
+
+		iccData, colorSpace := detectJPEGICCProfile(reader)
+		if iccData != nil {
+			t.Error("Expected nil ICC data")
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("ColorSpace: got=%s, want=sRGB", colorSpace)
+		}
+	})
+}
+
+func TestJPEGSubsampling_AllMarkers(t *testing.T) {
+	t.Run("SOF2_Progressive_420", func(t *testing.T) {
+		jpegData := createJPEGWithSOFMarker(0xC2, 8, 3, 100, 100, 2, 2, 1, 1)
+		reader := bytes.NewReader(jpegData)
+
+		result := detectJPEGSubsampling(reader)
+		if result != "4:2:0" {
+			t.Errorf("SOF2 subsampling: got=%s, want=4:2:0", result)
+		}
+	})
+
+	t.Run("Grayscale_1Component", func(t *testing.T) {
+		jpegData := createGrayscaleJPEG(100, 100, 8)
+		reader := bytes.NewReader(jpegData)
+
+		result := detectJPEGSubsampling(reader)
+		if result != "Grayscale" {
+			t.Errorf("Grayscale subsampling: got=%s, want=Grayscale", result)
+		}
+	})
+
+	t.Run("CustomSubsampling_3x3_1x1", func(t *testing.T) {
+		jpegData := createCustomSubsamplingJPEG(100, 100, 3, 3, 1, 1, 8)
+		reader := bytes.NewReader(jpegData)
+
+		result := detectJPEGSubsampling(reader)
+		if result != "Custom (3x3:1x1)" {
+			t.Errorf("Custom subsampling: got=%s, want=Custom (3x3:1x1)", result)
+		}
+	})
+
+	t.Run("EOI_WithoutSOF", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xD9})
+		reader := bytes.NewReader(buf.Bytes())
+
+		result := detectJPEGSubsampling(reader)
+		if result != "Unknown" {
+			t.Errorf("EOI without SOF: got=%s, want=Unknown", result)
+		}
+	})
+
+	t.Run("TruncatedSOF", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xC0})
+		_ = binary.Write(&buf, binary.BigEndian, uint16(10))
+		buf.Write([]byte{8, 0, 100, 0, 100})
+		reader := bytes.NewReader(buf.Bytes())
+
+		result := detectJPEGSubsampling(reader)
+		if result != "Unknown" {
+			t.Errorf("Truncated SOF: got=%s, want=Unknown", result)
+		}
+	})
+
+	t.Run("InvalidNumComponents", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xC0})
+		_ = binary.Write(&buf, binary.BigEndian, uint16(20))
+		buf.Write([]byte{8})
+		_ = binary.Write(&buf, binary.BigEndian, uint16(100))
+		_ = binary.Write(&buf, binary.BigEndian, uint16(100))
+		buf.WriteByte(10)
+		buf.Write(make([]byte, 5))
+		reader := bytes.NewReader(buf.Bytes())
+
+		result := detectJPEGSubsampling(reader)
+		if result != "Unknown" {
+			t.Errorf("Invalid components: got=%s, want=Unknown", result)
+		}
+	})
+}
+
+func TestJPEGICCProfile_EdgeCases(t *testing.T) {
+	t.Run("NoICCProfile_ReachesEOI", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xD9})
+		reader := bytes.NewReader(buf.Bytes())
+
+		iccData, colorSpace := detectJPEGICCProfile(reader)
+		if iccData != nil {
+			t.Error("Expected nil ICC data")
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("ColorSpace: got=%s, want=sRGB", colorSpace)
+		}
+	})
+
+	t.Run("NonICCAPP2Marker", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xE2})
+		_ = binary.Write(&buf, binary.BigEndian, uint16(20))
+		buf.WriteString("NOT_ICC_PROFILE\x00")
+		buf.Write(make([]byte, 4))
+		buf.Write([]byte{0xFF, 0xD9})
+		reader := bytes.NewReader(buf.Bytes())
+
+		iccData, colorSpace := detectJPEGICCProfile(reader)
+		if iccData != nil {
+			t.Error("Expected nil ICC data for non-ICC APP2")
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("ColorSpace: got=%s, want=sRGB", colorSpace)
+		}
+	})
+
+	t.Run("ShortICCData", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xE2})
+		_ = binary.Write(&buf, binary.BigEndian, uint16(18))
+		buf.WriteString("ICC_PROFILE\x00")
+		buf.Write([]byte{1, 1})
+		buf.Write([]byte{0, 0})
+		buf.Write([]byte{0xFF, 0xD9})
+		reader := bytes.NewReader(buf.Bytes())
+
+		_, colorSpace := detectJPEGICCProfile(reader)
+		if colorSpace != "sRGB" {
+			t.Errorf("ColorSpace: got=%s, want=sRGB", colorSpace)
+		}
+	})
+
+	t.Run("InvalidJPEGHeader", func(t *testing.T) {
+		buf := bytes.NewReader([]byte{0x00, 0x00})
+
+		iccData, colorSpace := detectJPEGICCProfile(buf)
+		if iccData != nil {
+			t.Error("Expected nil ICC data for invalid header")
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("ColorSpace: got=%s, want=sRGB", colorSpace)
+		}
+	})
+
+	t.Run("TruncatedMarkerLength", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xE1})
+		reader := bytes.NewReader(buf.Bytes())
+
+		iccData, colorSpace := detectJPEGICCProfile(reader)
+		if iccData != nil {
+			t.Error("Expected nil ICC data for truncated marker")
+		}
+		if colorSpace != "sRGB" {
+			t.Errorf("ColorSpace: got=%s, want=sRGB", colorSpace)
+		}
+	})
+}
+
+func Test12BitJPEG_AllSOFMarkers(t *testing.T) {
+	t.Run("SOF2_Progressive_8bit", func(t *testing.T) {
+		jpegData := createJPEGWithSOFMarker(0xC2, 8, 3, 100, 100, 2, 2, 1, 1)
+		reader := bytes.NewReader(jpegData)
+
+		result := is12BitJPEG(reader)
+		if result {
+			t.Error("Expected false for 8-bit progressive JPEG")
+		}
+	})
+
+	t.Run("SOF2_Progressive_12bit", func(t *testing.T) {
+		jpegData := createJPEGWithSOFMarker(0xC2, 12, 3, 100, 100, 2, 2, 1, 1)
+		reader := bytes.NewReader(jpegData)
+
+		result := is12BitJPEG(reader)
+		if !result {
+			t.Error("Expected true for 12-bit progressive JPEG")
+		}
+	})
+
+	t.Run("EmptySOFData", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xC0})
+		_ = binary.Write(&buf, binary.BigEndian, uint16(2))
+		reader := bytes.NewReader(buf.Bytes())
+
+		result := is12BitJPEG(reader)
+		if result {
+			t.Error("Expected false for empty SOF data")
+		}
+	})
+
+	t.Run("ReachesEOI_Without12Bit", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xD9})
+		reader := bytes.NewReader(buf.Bytes())
+
+		result := is12BitJPEG(reader)
+		if result {
+			t.Error("Expected false when reaching EOI without SOF")
+		}
+	})
+
+	t.Run("InvalidJPEGHeader", func(t *testing.T) {
+		buf := bytes.NewReader([]byte{0x00, 0x00})
+
+		result := is12BitJPEG(buf)
+		if result {
+			t.Error("Expected false for invalid JPEG header")
+		}
+	})
+
+	t.Run("TruncatedSOF", func(t *testing.T) {
+		var buf bytes.Buffer
+		buf.Write([]byte{0xFF, 0xD8})
+		buf.Write([]byte{0xFF, 0xC0})
+		reader := bytes.NewReader(buf.Bytes())
+
+		result := is12BitJPEG(reader)
+		if result {
+			t.Error("Expected false for truncated SOF")
+		}
+	})
+}
+
+func createGrayscaleJPEG(width, height int, precision uint8) []byte {
+	return createJPEGWithSOFMarker(0xC0, precision, 1, width, height, 1, 1, 0, 0)
+}
+
+func createCustomSubsamplingJPEG(width, height int, yH, yV, cbH, cbV, precision uint8) []byte {
+	return createJPEGWithSOFMarker(0xC0, precision, 3, width, height, yH, yV, cbH, cbV)
+}
+
+func createJPEGWithSOFMarker(sofMarker, precision uint8, numComponents int, width, height int, yH, yV, cbH, cbV uint8) []byte {
+	var buf bytes.Buffer
+
+	buf.Write([]byte{0xFF, 0xD8})
+
+	buf.Write([]byte{0xFF, sofMarker})
+
+	sofLength := uint16(8 + numComponents*3)
+	_ = binary.Write(&buf, binary.BigEndian, sofLength)
+	buf.WriteByte(precision)
+	_ = binary.Write(&buf, binary.BigEndian, uint16(height))
+	_ = binary.Write(&buf, binary.BigEndian, uint16(width))
+	buf.WriteByte(uint8(numComponents))
+
+	switch numComponents {
+	case 1:
+		buf.WriteByte(1)
+		buf.WriteByte((1 << 4) | 1)
+		buf.WriteByte(0)
+	case 3:
+		buf.WriteByte(1)
+		buf.WriteByte((yH << 4) | yV)
+		buf.WriteByte(0)
+
+		buf.WriteByte(2)
+		buf.WriteByte((cbH << 4) | cbV)
+		buf.WriteByte(1)
+
+		buf.WriteByte(3)
+		buf.WriteByte((cbH << 4) | cbV)
+		buf.WriteByte(1)
+	}
+
+	buf.Write([]byte{0xFF, 0xD9})
+
+	return buf.Bytes()
+}
