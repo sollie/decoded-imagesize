@@ -159,7 +159,8 @@ func TestPNGRGBAEstimation(t *testing.T) {
 				t.Fatalf("Failed to encode PNG: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -208,7 +209,8 @@ func TestPNGGrayscaleEstimation(t *testing.T) {
 				t.Fatalf("Failed to encode PNG: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -257,7 +259,8 @@ func TestPNGGray16Estimation(t *testing.T) {
 				t.Fatalf("Failed to encode PNG: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -306,7 +309,8 @@ func TestJPEGEstimation(t *testing.T) {
 				t.Fatalf("Failed to encode JPEG: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -379,7 +383,8 @@ func TestAccuracyAcrossAllFormats(t *testing.T) {
 				t.Fatalf("Failed to encode image: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -420,7 +425,8 @@ func TestWebPEstimation(t *testing.T) {
 				t.Fatalf("Failed to encode WebP: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -472,7 +478,8 @@ func TestHEIFEstimation(t *testing.T) {
 				t.Fatalf("Failed to write HEIF file: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -524,7 +531,8 @@ func TestAVIFEstimation(t *testing.T) {
 				t.Fatalf("Failed to write AVIF file: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -576,10 +584,11 @@ func TestWebPLosslessEstimation(t *testing.T) {
 			t.Fatalf("Failed to encode WebP: %v", err)
 		}
 
-		estimated, err := estimateDecodedSize(filename)
+		info, err := estimateDecodedSize(filename, false)
 		if err != nil {
 			t.Fatalf("estimateDecodedSize failed: %v", err)
 		}
+		estimated := info.DecodedSize
 
 		actual, err := getActualDecodedSize(filename)
 		if err != nil {
@@ -702,7 +711,8 @@ func TestMultipleColorModels(t *testing.T) {
 				t.Fatalf("Failed to encode: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -759,7 +769,8 @@ func TestPNGPalettedEstimation(t *testing.T) {
 				t.Fatalf("Failed to encode PNG: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -808,7 +819,8 @@ func TestPNGRGBA64Estimation(t *testing.T) {
 				t.Fatalf("Failed to encode PNG: %v", err)
 			}
 
-			estimated, err := estimateDecodedSize(filename)
+			info, err := estimateDecodedSize(filename, false)
+			estimated := info.DecodedSize
 			if err != nil {
 				t.Fatalf("estimateDecodedSize failed: %v", err)
 			}
@@ -1410,7 +1422,7 @@ func TestErrorHandling(t *testing.T) {
 	})
 
 	t.Run("EstimateDecodedSize_NonExistent", func(t *testing.T) {
-		_, err := estimateDecodedSize("/nonexistent/file.png")
+		_, err := estimateDecodedSize("/nonexistent/file.png", false)
 		if err == nil {
 			t.Error("Expected error for nonexistent file, got nil")
 		}
@@ -1425,7 +1437,7 @@ func TestErrorHandling(t *testing.T) {
 			t.Fatalf("Failed to create test file: %v", err)
 		}
 
-		_, err = estimateDecodedSize(filename)
+		_, err = estimateDecodedSize(filename, false)
 		if err == nil {
 			t.Error("Expected error for invalid image file, got nil")
 		}
@@ -3449,13 +3461,13 @@ func TestEstimateDecodedSize_WithICCProfile(t *testing.T) {
 			t.Fatal(err)
 		}
 
-		size, err := estimateDecodedSize(tmpfile.Name())
+		info, err := estimateDecodedSize(tmpfile.Name(), false)
 		if err != nil {
 			t.Fatalf("Failed to estimate decoded size: %v", err)
 		}
 
-		if size != 40000 {
-			t.Errorf("Expected 40000 bytes, got %d", size)
+		if info.DecodedSize != 40000 {
+			t.Errorf("Expected 40000 bytes, got %d", info.DecodedSize)
 		}
 	})
 }
