@@ -222,6 +222,11 @@ func analyzePNG(r io.ReadSeeker, config image.Config, info *ImageInfo) {
 	_, _ = r.Seek(0, 0)
 	info.BitDepth = detectPNGBitDepth(r)
 
+	// Set HDRLimited for 16-bit PNGs
+	if info.BitDepth == 16 {
+		info.HDRType = HDRLimited
+	}
+
 	_, _ = r.Seek(0, 0)
 	iccProfile, colorSpace := detectPNGICCProfile(r)
 	if len(iccProfile) > 0 {
