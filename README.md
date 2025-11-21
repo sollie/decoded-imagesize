@@ -73,7 +73,7 @@ go build
 ## Usage
 
 ```bash
-./testdecode <image-file>
+./decoded-imagesize <image-file>
 ```
 
 ### Example Output
@@ -289,16 +289,16 @@ if size > availableRAM {
 
 **Compare format efficiency**:
 ```bash
-$ ./testdecode photo.png
+$ ./decoded-imagesize photo.png
 Compression ratio: 514.7x
 
-$ ./testdecode photo.avif
+$ ./decoded-imagesize photo.avif
 Compression ratio: 231.1x
 ```
 
 **Validate HDR content**:
 ```bash
-$ ./testdecode hdr_photo.heic | grep HDR
+$ ./decoded-imagesize hdr_photo.heic | grep HDR
 HDR Support: PQ (Perceptual Quantizer)
 ```
 
