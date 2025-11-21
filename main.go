@@ -894,7 +894,7 @@ func detectPNGBitDepth(r io.ReadSeeker) int {
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Println("Usage: testdecode <image-file>")
+		fmt.Println("Usage: decoded-imagesize <image-file>")
 		fmt.Println("Supported formats: PNG, JPEG, HEIF/HEIC, AVIF, WebP")
 		os.Exit(1)
 	}
