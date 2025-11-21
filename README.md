@@ -15,7 +15,7 @@ A detailed comparison of supported image format characteristics:
 | **Bit Depth** | 1, 2, 4, 8, 16 | 8, 12 | 8, 10, 12 | 8, 10, 12 | 8 |
 | **Alpha Channel** | ✓ | ✗ | ✓ | ✓ | ✓ |
 | **Chroma Subsampling** | N/A | 4:4:4, 4:2:2, 4:2:0 | 4:4:4, 4:2:2, 4:2:0 | 4:4:4, 4:2:2, 4:2:0 | 4:2:0 |
-| **HDR Support** | Limited (16-bit) | ✗ | ✓ (PQ, HLG) | ✓ (PQ, HLG) | ✗ |
+| **HDR Support** | ✗ | ✗ | ✓ (PQ, HLG) | ✓ (PQ, HLG) | ✗ |
 | **Compression** | Lossless | Lossy | Lossy/Lossless | Lossy/Lossless | Lossy/Lossless |
 | **Max Resolution** | Unlimited | 65535×65535 | Unlimited | Unlimited | 16383×16383 |
 | **Typical Use Cases** | Web graphics, screenshots | Photography, web images | Mobile photos, HDR | Next-gen web, HDR | Web images, transparency |
@@ -43,8 +43,7 @@ A detailed comparison of supported image format characteristics:
 - **WebP**: Always 8-bit
 
 #### HDR Detection
-- **HEIF/AVIF**: Detects PQ (Perceptual Quantizer, SMPTE ST 2084) and HLG (Hybrid Log-Gamma) transfer functions
-- **PNG**: Reports 16-bit as "Limited HDR"
+- **HEIF/AVIF**: Detects PQ (SMPTE ST 2084) and HLG (ARIB STD-B67) transfer functions
 - **Detection method**: Parses `colr` box transfer characteristics in HEIF/AVIF
 
 #### Chroma Subsampling Detection
@@ -88,7 +87,7 @@ Color Space: Display P3
 Bit Depth: 16
 Alpha Channel: true
 Chroma Subsampling: N/A
-HDR Support: Limited (16-bit)
+HDR Support: None
 Compression Type: Lossless
 Original file size: 57254 bytes (0.05 MB)
 Estimated decoded size: 24000000 bytes (22.89 MB)
@@ -122,7 +121,7 @@ Color Space: BT.2020
 Bit Depth: 10
 Alpha Channel: false
 Chroma Subsampling: 4:2:0
-HDR Support: PQ (Perceptual Quantizer)
+HDR Support: PQ (SMPTE ST 2084)
 Compression Type: Lossy/Lossless
 Original file size: 1245678 bytes (1.19 MB)
 Estimated decoded size: 24883200 bytes (23.73 MB)
@@ -223,10 +222,10 @@ Comprehensive test suite with **100% accuracy** verified across:
 ```bash
 $ go test -v
 PASS
-ok      decoded-imagesize       9.466s
+ok      decoded-imagesize       9.862s
 
 $ go test -cover
-coverage: 64.5% of statements
+coverage: 89.8% of statements
 ```
 
 ### Quality Checks
