@@ -452,10 +452,10 @@ func parseIpcoBox(data []byte, meta *heifMetadata) {
 
 		switch boxType {
 		case "pixi":
-			if len(boxData) >= 6 {
-				numChannels := int(boxData[4])
-				if numChannels > 0 && len(boxData) >= 5+numChannels {
-					meta.BitDepth = int(boxData[5])
+			if len(boxData) >= 3 {
+				numChannels := int(boxData[1])
+				if numChannels > 0 && len(boxData) >= 2+numChannels {
+					meta.BitDepth = int(boxData[2])
 				}
 			}
 
