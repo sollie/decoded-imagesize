@@ -249,20 +249,20 @@ func analyzeJPEG(r io.ReadSeeker, config image.Config, info *ImageInfo) {
 	subsampling := detectJPEGSubsampling(r)
 	switch subsampling {
 	case "4:4:4":
+		info.ColorModel = ColorModelYCbCr
 		info.ChromaSubsampling = ChromaSubsampling444
 	case "4:2:2":
+		info.ColorModel = ColorModelYCbCr
 		info.ChromaSubsampling = ChromaSubsampling422
 	case "4:2:0":
+		info.ColorModel = ColorModelYCbCr
 		info.ChromaSubsampling = ChromaSubsampling420
 	case "Grayscale":
 		info.ColorModel = ColorModelGrayscale
 		info.ChromaSubsampling = ChromaSubsamplingNA
 	default:
-		info.ChromaSubsampling = ChromaSubsamplingUnknown
-	}
-
-	if info.ColorModel != ColorModelGrayscale {
 		info.ColorModel = ColorModelYCbCr
+		info.ChromaSubsampling = ChromaSubsamplingUnknown
 	}
 
 	_, _ = r.Seek(0, 0)
@@ -290,27 +290,26 @@ func analyzeWebP(r io.ReadSeeker, config image.Config, info *ImageInfo) {
 	} else {
 		info.CompressionType = CompressionLossy
 		info.ChromaSubsampling = chromaSub
-		if info.ColorModel != ColorModelGrayscale {
-			info.ColorModel = ColorModelYCbCr
-		}
 	}
 
 	info.ColorSpace = ColorSpaceSRGB
 }
 
 func analyzeHEIF(r io.ReadSeeker, config image.Config, info *ImageInfo) {
-	info.ColorModel, info.HasAlpha = mapStdColorModel(config.ColorModel)
+	info.ColorModel = ColorModelYCbCr
+	info.HasAlpha = false
 	info.CompressionType = CompressionHybrid
-	info.BitDepth = 10
+	info.BitDepth = 8
 	info.ColorSpace = ColorSpaceBT709
 	info.ChromaSubsampling = ChromaSubsampling420
 	info.HDRType = HDRNone
 }
 
 func analyzeAVIF(r io.ReadSeeker, config image.Config, info *ImageInfo) {
-	info.ColorModel, info.HasAlpha = mapStdColorModel(config.ColorModel)
+	info.ColorModel = ColorModelYCbCr
+	info.HasAlpha = false
 	info.CompressionType = CompressionHybrid
-	info.BitDepth = 10
+	info.BitDepth = 8
 	info.ColorSpace = ColorSpaceBT709
 	info.ChromaSubsampling = ChromaSubsampling420
 	info.HDRType = HDRNone
@@ -336,7 +335,7 @@ func parseColorSpace(cs string) ColorSpace {
 func detectWebPFormat(r io.ReadSeeker) (bool, ChromaSubsampling) {
 	_, _ = r.Seek(0, 0)
 
-	header := make([]byte, 16)
+	header := make([]byte, 12)
 	if _, err := io.ReadFull(r, header); err != nil {
 		return false, ChromaSubsamplingUnknown
 	}
@@ -420,16 +419,7 @@ func calculateBytesPerPixel(info *ImageInfo) int {
 		}
 		return 3 * bytesPerChannel
 	case ColorModelYCbCr:
-		switch info.ChromaSubsampling {
-		case ChromaSubsampling444:
-			return 3 * bytesPerChannel
-		case ChromaSubsampling422:
-			return 2 * bytesPerChannel
-		case ChromaSubsampling420:
-			return 2 * bytesPerChannel
-		default:
-			return 3 * bytesPerChannel
-		}
+		return 3 * bytesPerChannel
 	default:
 		return 4
 	}
@@ -574,7 +564,7 @@ func detectJPEGSubsampling(r io.ReadSeeker) string {
 				return "Unknown"
 			}
 
-			numComponents := sofData[3]
+			numComponents := sofData[5]
 			if numComponents < 3 {
 				return "Grayscale"
 			}
@@ -583,8 +573,8 @@ func detectJPEGSubsampling(r io.ReadSeeker) string {
 				return "Unknown"
 			}
 
-			ySample := sofData[5]
-			cbSample := sofData[8]
+			ySample := sofData[7]
+			cbSample := sofData[10]
 
 			yH := (ySample >> 4) & 0x0F
 			yV := ySample & 0x0F

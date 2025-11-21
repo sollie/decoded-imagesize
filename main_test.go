@@ -909,3 +909,290 @@ func TestYCbCrSubsamplingDetection(t *testing.T) {
 		t.Errorf("Failed to detect YCbCr subsampling")
 	}
 }
+
+func TestImageInfoPNG(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name             string
+		img              image.Image
+		expectedModel    ColorModel
+		expectedBitDepth int
+		expectedAlpha    bool
+		expectedChroma   ChromaSubsampling
+		expectedHDR      HDRType
+		expectedComp     CompressionType
+	}{
+		{
+			name:             "PNG_RGBA",
+			img:              generateRGBAImage(100, 100),
+			expectedModel:    ColorModelRGB,
+			expectedBitDepth: 8,
+			expectedAlpha:    true,
+			expectedChroma:   ChromaSubsamplingNA,
+			expectedHDR:      HDRNone,
+			expectedComp:     CompressionLossless,
+		},
+		{
+			name:             "PNG_Gray",
+			img:              generateGrayImage(100, 100),
+			expectedModel:    ColorModelGrayscale,
+			expectedBitDepth: 8,
+			expectedAlpha:    false,
+			expectedChroma:   ChromaSubsamplingNA,
+			expectedHDR:      HDRNone,
+			expectedComp:     CompressionLossless,
+		},
+		{
+			name:             "PNG_Gray16",
+			img:              generateGray16Image(100, 100),
+			expectedModel:    ColorModelGrayscale,
+			expectedBitDepth: 16,
+			expectedAlpha:    false,
+			expectedChroma:   ChromaSubsamplingNA,
+			expectedHDR:      HDRNone,
+			expectedComp:     CompressionLossless,
+		},
+		{
+			name:             "PNG_RGBA64",
+			img:              generateRGBA64Image(100, 100),
+			expectedModel:    ColorModelRGB,
+			expectedBitDepth: 16,
+			expectedAlpha:    true,
+			expectedChroma:   ChromaSubsamplingNA,
+			expectedHDR:      HDRNone,
+			expectedComp:     CompressionLossless,
+		},
+		{
+			name:             "PNG_Paletted",
+			img:              generatePalettedImage(100, 100),
+			expectedModel:    ColorModelIndexed,
+			expectedBitDepth: 8,
+			expectedAlpha:    false,
+			expectedChroma:   ChromaSubsamplingNA,
+			expectedHDR:      HDRNone,
+			expectedComp:     CompressionLossless,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			filename := filepath.Join(tmpDir, tc.name+".png")
+			file, err := os.Create(filename)
+			if err != nil {
+				t.Fatalf("Failed to create file: %v", err)
+			}
+
+			err = png.Encode(file, tc.img)
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				t.Fatalf("Failed to encode PNG: %v", err)
+			}
+
+			info, err := analyzeImage(filename)
+			if err != nil {
+				t.Fatalf("analyzeImage failed: %v", err)
+			}
+
+			if info.Format != "png" {
+				t.Errorf("Format mismatch: got=%s, want=png", info.Format)
+			}
+
+			if info.ColorModel != tc.expectedModel {
+				t.Errorf("ColorModel mismatch: got=%s, want=%s", info.ColorModel, tc.expectedModel)
+			}
+
+			if info.BitDepth != tc.expectedBitDepth {
+				t.Errorf("BitDepth mismatch: got=%d, want=%d", info.BitDepth, tc.expectedBitDepth)
+			}
+
+			if info.HasAlpha != tc.expectedAlpha {
+				t.Errorf("HasAlpha mismatch: got=%v, want=%v", info.HasAlpha, tc.expectedAlpha)
+			}
+
+			if info.ChromaSubsampling != tc.expectedChroma {
+				t.Errorf("ChromaSubsampling mismatch: got=%s, want=%s", info.ChromaSubsampling, tc.expectedChroma)
+			}
+
+			if info.HDRType != tc.expectedHDR {
+				t.Errorf("HDRType mismatch: got=%s, want=%s", info.HDRType, tc.expectedHDR)
+			}
+
+			if info.CompressionType != tc.expectedComp {
+				t.Errorf("CompressionType mismatch: got=%s, want=%s", info.CompressionType, tc.expectedComp)
+			}
+
+			if info.ColorSpace != ColorSpaceSRGB {
+				t.Errorf("ColorSpace mismatch: got=%s, want=sRGB", info.ColorSpace)
+			}
+		})
+	}
+}
+
+func TestImageInfoJPEG(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name             string
+		img              image.Image
+		expectedModel    ColorModel
+		expectedBitDepth int
+		expectedAlpha    bool
+		expectedHDR      HDRType
+		expectedComp     CompressionType
+	}{
+		{
+			name:             "JPEG_Color",
+			img:              generateRGBAImage(100, 100),
+			expectedModel:    ColorModelYCbCr,
+			expectedBitDepth: 8,
+			expectedAlpha:    false,
+			expectedHDR:      HDRNone,
+			expectedComp:     CompressionLossy,
+		},
+		{
+			name:             "JPEG_Grayscale",
+			img:              generateGrayImage(100, 100),
+			expectedModel:    ColorModelGrayscale,
+			expectedBitDepth: 8,
+			expectedAlpha:    false,
+			expectedHDR:      HDRNone,
+			expectedComp:     CompressionLossy,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			filename := filepath.Join(tmpDir, tc.name+".jpg")
+			file, err := os.Create(filename)
+			if err != nil {
+				t.Fatalf("Failed to create file: %v", err)
+			}
+
+			err = jpeg.Encode(file, tc.img, &jpeg.Options{Quality: 90})
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				t.Fatalf("Failed to encode JPEG: %v", err)
+			}
+
+			info, err := analyzeImage(filename)
+			if err != nil {
+				t.Fatalf("analyzeImage failed: %v", err)
+			}
+
+			t.Logf("JPEG Analysis: ColorModel=%s, ChromaSubsampling=%s, BitDepth=%d",
+				info.ColorModel, info.ChromaSubsampling, info.BitDepth)
+
+			if info.Format != "jpeg" {
+				t.Errorf("Format mismatch: got=%s, want=jpeg", info.Format)
+			}
+
+			if info.ColorModel != tc.expectedModel {
+				t.Errorf("ColorModel mismatch: got=%s, want=%s", info.ColorModel, tc.expectedModel)
+			}
+
+			if info.BitDepth != tc.expectedBitDepth {
+				t.Errorf("BitDepth mismatch: got=%d, want=%d", info.BitDepth, tc.expectedBitDepth)
+			}
+
+			if info.HasAlpha != tc.expectedAlpha {
+				t.Errorf("HasAlpha mismatch: got=%v, want=%v", info.HasAlpha, tc.expectedAlpha)
+			}
+
+			if info.HDRType != tc.expectedHDR {
+				t.Errorf("HDRType mismatch: got=%s, want=%s", info.HDRType, tc.expectedHDR)
+			}
+
+			if info.CompressionType != tc.expectedComp {
+				t.Errorf("CompressionType mismatch: got=%s, want=%s", info.CompressionType, tc.expectedComp)
+			}
+
+			if tc.expectedModel == ColorModelYCbCr {
+				if info.ChromaSubsampling == ChromaSubsamplingUnknown {
+					t.Errorf("ChromaSubsampling should be detected for YCbCr JPEG")
+				}
+			}
+		})
+	}
+}
+
+func TestImageInfoWebP(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	tests := []struct {
+		name           string
+		img            image.Image
+		lossless       bool
+		expectedModel  ColorModel
+		expectedComp   CompressionType
+		expectedChroma ChromaSubsampling
+	}{
+		{
+			name:           "WebP_Lossless",
+			img:            generateRGBAImage(100, 100),
+			lossless:       true,
+			expectedModel:  ColorModelRGB,
+			expectedComp:   CompressionLossless,
+			expectedChroma: ChromaSubsamplingNA,
+		},
+		{
+			name:           "WebP_Lossy",
+			img:            generateRGBAImage(100, 100),
+			lossless:       false,
+			expectedModel:  ColorModelRGB,
+			expectedComp:   CompressionLossy,
+			expectedChroma: ChromaSubsampling420,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			filename := filepath.Join(tmpDir, tc.name+".webp")
+			file, err := os.Create(filename)
+			if err != nil {
+				t.Fatalf("Failed to create file: %v", err)
+			}
+
+			err = webp.Encode(file, tc.img, &webp.Options{Lossless: tc.lossless, Quality: 90})
+			if closeErr := file.Close(); closeErr != nil && err == nil {
+				err = closeErr
+			}
+			if err != nil {
+				t.Fatalf("Failed to encode WebP: %v", err)
+			}
+
+			info, err := analyzeImage(filename)
+			if err != nil {
+				t.Fatalf("analyzeImage failed: %v", err)
+			}
+
+			if info.Format != "webp" {
+				t.Errorf("Format mismatch: got=%s, want=webp", info.Format)
+			}
+
+			if info.ColorModel != tc.expectedModel {
+				t.Errorf("ColorModel mismatch: got=%s, want=%s", info.ColorModel, tc.expectedModel)
+			}
+
+			if info.CompressionType != tc.expectedComp {
+				t.Errorf("CompressionType mismatch: got=%s, want=%s", info.CompressionType, tc.expectedComp)
+			}
+
+			if info.ChromaSubsampling != tc.expectedChroma {
+				t.Errorf("ChromaSubsampling mismatch: got=%s, want=%s", info.ChromaSubsampling, tc.expectedChroma)
+			}
+
+			if info.BitDepth != 8 {
+				t.Errorf("BitDepth mismatch: got=%d, want=8", info.BitDepth)
+			}
+
+			if info.HDRType != HDRNone {
+				t.Errorf("HDRType should be None for WebP, got=%s", info.HDRType)
+			}
+		})
+	}
+}
