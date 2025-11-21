@@ -1791,6 +1791,110 @@ func TestHEIFMetadataBoxParsing(t *testing.T) {
 	}
 }
 
+func TestWebPFormatDetection(t *testing.T) {
+	t.Run("VP8X_Extended", func(t *testing.T) {
+		webpData := createWebPData("VP8X")
+		reader := bytes.NewReader(webpData)
+
+		isLossless, chroma := detectWebPFormat(reader)
+		if isLossless {
+			t.Error("VP8X should not be detected as lossless")
+		}
+		if chroma != ChromaSubsamplingUnknown {
+			t.Errorf("VP8X chroma: got=%s, want=%s", chroma, ChromaSubsamplingUnknown)
+		}
+	})
+
+	t.Run("VP8L_Lossless", func(t *testing.T) {
+		webpData := createWebPData("VP8L")
+		reader := bytes.NewReader(webpData)
+
+		isLossless, chroma := detectWebPFormat(reader)
+		if !isLossless {
+			t.Error("VP8L should be detected as lossless")
+		}
+		if chroma != ChromaSubsamplingNA {
+			t.Errorf("VP8L chroma: got=%s, want=%s", chroma, ChromaSubsamplingNA)
+		}
+	})
+
+	t.Run("VP8_Lossy", func(t *testing.T) {
+		webpData := createWebPData("VP8 ")
+		reader := bytes.NewReader(webpData)
+
+		isLossless, chroma := detectWebPFormat(reader)
+		if isLossless {
+			t.Error("VP8 should not be detected as lossless")
+		}
+		if chroma != ChromaSubsampling420 {
+			t.Errorf("VP8 chroma: got=%s, want=%s", chroma, ChromaSubsampling420)
+		}
+	})
+
+	t.Run("TruncatedHeader", func(t *testing.T) {
+		webpData := []byte("RIFF")
+		reader := bytes.NewReader(webpData)
+
+		isLossless, chroma := detectWebPFormat(reader)
+		if isLossless {
+			t.Error("Truncated file should not be lossless")
+		}
+		if chroma != ChromaSubsamplingUnknown {
+			t.Errorf("Truncated chroma: got=%s, want=%s", chroma, ChromaSubsamplingUnknown)
+		}
+	})
+
+	t.Run("InvalidRIFF", func(t *testing.T) {
+		webpData := []byte("JUNK____WEBP____")
+		reader := bytes.NewReader(webpData)
+
+		isLossless, chroma := detectWebPFormat(reader)
+		if isLossless {
+			t.Error("Invalid RIFF should not be lossless")
+		}
+		if chroma != ChromaSubsamplingUnknown {
+			t.Errorf("Invalid RIFF chroma: got=%s, want=%s", chroma, ChromaSubsamplingUnknown)
+		}
+	})
+
+	t.Run("InvalidWEBP", func(t *testing.T) {
+		webpData := []byte("RIFF____JUNK____")
+		reader := bytes.NewReader(webpData)
+
+		isLossless, chroma := detectWebPFormat(reader)
+		if isLossless {
+			t.Error("Invalid WEBP should not be lossless")
+		}
+		if chroma != ChromaSubsamplingUnknown {
+			t.Errorf("Invalid WEBP chroma: got=%s, want=%s", chroma, ChromaSubsamplingUnknown)
+		}
+	})
+
+	t.Run("TruncatedChunkHeader", func(t *testing.T) {
+		webpData := []byte("RIFF\x00\x00\x00\x00WEBP")
+		reader := bytes.NewReader(webpData)
+
+		isLossless, chroma := detectWebPFormat(reader)
+		if isLossless {
+			t.Error("Truncated chunk should not be lossless")
+		}
+		if chroma != ChromaSubsamplingUnknown {
+			t.Errorf("Truncated chunk chroma: got=%s, want=%s", chroma, ChromaSubsamplingUnknown)
+		}
+	})
+}
+
+func createWebPData(fourCC string) []byte {
+	var buf bytes.Buffer
+
+	buf.WriteString("RIFF")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(100))
+	buf.WriteString("WEBP")
+	buf.WriteString(fourCC)
+
+	return buf.Bytes()
+}
+
 func createMinimalHEIFMetadata(colorPrimaries, transferChar uint16, bitDepth uint8, hasAlpha bool) []byte {
 	var buf bytes.Buffer
 
@@ -1858,4 +1962,255 @@ func createMinimalHEIFMetadata(colorPrimaries, transferChar uint16, bitDepth uin
 	writeBox("meta", metaData.Bytes())
 
 	return buf.Bytes()
+}
+
+func TestHEIFMetadataEdgeCases(t *testing.T) {
+	t.Run("SmallFile_LessThan12Bytes", func(t *testing.T) {
+		data := []byte("short")
+		reader := bytes.NewReader(data)
+
+		metadata := parseHEIFMetadata(reader)
+
+		if metadata.BitDepth != 8 {
+			t.Errorf("Expected default BitDepth=8, got=%d", metadata.BitDepth)
+		}
+		if metadata.ColorSpace != ColorSpaceBT709 {
+			t.Errorf("Expected default ColorSpace=BT.709, got=%s", metadata.ColorSpace)
+		}
+	})
+
+	t.Run("MissingFtypBox", func(t *testing.T) {
+		var buf bytes.Buffer
+		_ = binary.Write(&buf, binary.BigEndian, uint32(12))
+		buf.WriteString("junk")
+		buf.Write(make([]byte, 4))
+
+		reader := bytes.NewReader(buf.Bytes())
+		metadata := parseHEIFMetadata(reader)
+
+		if metadata.BitDepth != 8 {
+			t.Errorf("Expected default BitDepth=8, got=%d", metadata.BitDepth)
+		}
+	})
+
+	t.Run("BoxSizeZero", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(16))
+		buf.WriteString("ftyp")
+		buf.WriteString("heic")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+		buf.WriteString("meta")
+
+		reader := bytes.NewReader(buf.Bytes())
+		metadata := parseHEIFMetadata(reader)
+
+		if metadata.ColorSpace != ColorSpaceBT709 {
+			t.Errorf("Expected default ColorSpace=BT.709, got=%s", metadata.ColorSpace)
+		}
+	})
+
+	t.Run("BoxSizeLessThan8", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(16))
+		buf.WriteString("ftyp")
+		buf.WriteString("heic")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(4))
+		buf.WriteString("meta")
+
+		reader := bytes.NewReader(buf.Bytes())
+		metadata := parseHEIFMetadata(reader)
+
+		if metadata.ColorSpace != ColorSpaceBT709 {
+			t.Errorf("Expected default ColorSpace=BT.709, got=%s", metadata.ColorSpace)
+		}
+	})
+
+	t.Run("BoxSizeExceedsData", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(16))
+		buf.WriteString("ftyp")
+		buf.WriteString("heic")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(10000))
+		buf.WriteString("meta")
+		buf.Write([]byte("truncated"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		metadata := parseHEIFMetadata(reader)
+
+		if metadata.ColorSpace != ColorSpaceBT709 {
+			t.Errorf("Expected ColorSpace=BT.709, got=%s", metadata.ColorSpace)
+		}
+	})
+
+	t.Run("DataTruncatedDuringParsing", func(t *testing.T) {
+		var buf bytes.Buffer
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(16))
+		buf.WriteString("ftyp")
+		buf.WriteString("heic")
+		_ = binary.Write(&buf, binary.BigEndian, uint32(0))
+
+		_ = binary.Write(&buf, binary.BigEndian, uint32(20))
+		buf.WriteString("meta")
+		buf.Write([]byte("data"))
+
+		reader := bytes.NewReader(buf.Bytes())
+		metadata := parseHEIFMetadata(reader)
+
+		if metadata.ColorSpace != ColorSpaceBT709 {
+			t.Errorf("Expected ColorSpace=BT.709, got=%s", metadata.ColorSpace)
+		}
+	})
+}
+
+func TestMapStdColorModel(t *testing.T) {
+	t.Run("AlphaModel", func(t *testing.T) {
+		cm, hasAlpha := mapStdColorModel(color.AlphaModel)
+		if cm != ColorModelGrayscale {
+			t.Errorf("AlphaModel: expected Grayscale, got %s", cm)
+		}
+		if !hasAlpha {
+			t.Error("AlphaModel: expected hasAlpha=true")
+		}
+	})
+
+	t.Run("Alpha16Model", func(t *testing.T) {
+		cm, hasAlpha := mapStdColorModel(color.Alpha16Model)
+		if cm != ColorModelGrayscale {
+			t.Errorf("Alpha16Model: expected Grayscale, got %s", cm)
+		}
+		if !hasAlpha {
+			t.Error("Alpha16Model: expected hasAlpha=true")
+		}
+	})
+
+	t.Run("RGBA64Model", func(t *testing.T) {
+		cm, hasAlpha := mapStdColorModel(color.RGBA64Model)
+		if cm != ColorModelRGB {
+			t.Errorf("RGBA64Model: expected RGB, got %s", cm)
+		}
+		if !hasAlpha {
+			t.Error("RGBA64Model: expected hasAlpha=true")
+		}
+	})
+
+	t.Run("NRGBAModel", func(t *testing.T) {
+		cm, hasAlpha := mapStdColorModel(color.NRGBAModel)
+		if cm != ColorModelRGB {
+			t.Errorf("NRGBAModel: expected RGB, got %s", cm)
+		}
+		if !hasAlpha {
+			t.Error("NRGBAModel: expected hasAlpha=true")
+		}
+	})
+
+	t.Run("NRGBA64Model", func(t *testing.T) {
+		cm, hasAlpha := mapStdColorModel(color.NRGBA64Model)
+		if cm != ColorModelRGB {
+			t.Errorf("NRGBA64Model: expected RGB, got %s", cm)
+		}
+		if !hasAlpha {
+			t.Error("NRGBA64Model: expected hasAlpha=true")
+		}
+	})
+
+	t.Run("Gray16Model", func(t *testing.T) {
+		cm, hasAlpha := mapStdColorModel(color.Gray16Model)
+		if cm != ColorModelGrayscale {
+			t.Errorf("Gray16Model: expected Grayscale, got %s", cm)
+		}
+		if hasAlpha {
+			t.Error("Gray16Model: expected hasAlpha=false")
+		}
+	})
+
+	t.Run("PaletteModel", func(t *testing.T) {
+		palette := color.Palette{color.RGBA{0, 0, 0, 255}, color.RGBA{255, 255, 255, 255}}
+		cm, hasAlpha := mapStdColorModel(palette)
+		if cm != ColorModelIndexed {
+			t.Errorf("Palette: expected Indexed, got %s", cm)
+		}
+		if hasAlpha {
+			t.Error("Palette: expected hasAlpha=false")
+		}
+	})
+
+	t.Run("UnknownModel", func(t *testing.T) {
+		type customModel struct{}
+		var custom customModel
+		customColorModel := struct{ customModel }{custom}
+		// Create a minimal color.Model implementation
+		modelFunc := color.ModelFunc(func(c color.Color) color.Color { return c })
+		cm, hasAlpha := mapStdColorModel(modelFunc)
+		if cm != ColorModelUnknown {
+			t.Errorf("Custom model: expected Unknown, got %s", cm)
+		}
+		if hasAlpha {
+			t.Error("Custom model: expected hasAlpha=false")
+		}
+		_ = customColorModel
+	})
+}
+
+func TestCalculateBytesPerPixel(t *testing.T) {
+	tests := []struct {
+		name        string
+		colorModel  ColorModel
+		bitDepth    int
+		hasAlpha    bool
+		expectedBPP int
+	}{
+		{"Grayscale_8bit_NoAlpha", ColorModelGrayscale, 8, false, 1},
+		{"Grayscale_8bit_WithAlpha", ColorModelGrayscale, 8, true, 2},
+		{"Grayscale_16bit_NoAlpha", ColorModelGrayscale, 16, false, 2},
+		{"Grayscale_16bit_WithAlpha", ColorModelGrayscale, 16, true, 4},
+		{"Grayscale_10bit_NoAlpha", ColorModelGrayscale, 10, false, 2},
+		{"Grayscale_10bit_WithAlpha", ColorModelGrayscale, 10, true, 4},
+		{"Grayscale_12bit_NoAlpha", ColorModelGrayscale, 12, false, 2},
+		{"Grayscale_12bit_WithAlpha", ColorModelGrayscale, 12, true, 4},
+
+		{"Indexed_8bit", ColorModelIndexed, 8, false, 1},
+		{"Indexed_4bit", ColorModelIndexed, 4, false, 1},
+		{"Indexed_1bit", ColorModelIndexed, 1, false, 1},
+
+		{"RGB_8bit_NoAlpha", ColorModelRGB, 8, false, 3},
+		{"RGB_8bit_WithAlpha", ColorModelRGB, 8, true, 4},
+		{"RGB_16bit_NoAlpha", ColorModelRGB, 16, false, 6},
+		{"RGB_16bit_WithAlpha", ColorModelRGB, 16, true, 8},
+		{"RGB_10bit_NoAlpha", ColorModelRGB, 10, false, 6},
+		{"RGB_10bit_WithAlpha", ColorModelRGB, 10, true, 8},
+		{"RGB_12bit_NoAlpha", ColorModelRGB, 12, false, 6},
+		{"RGB_12bit_WithAlpha", ColorModelRGB, 12, true, 8},
+
+		{"YCbCr_8bit", ColorModelYCbCr, 8, false, 3},
+		{"YCbCr_10bit", ColorModelYCbCr, 10, false, 6},
+		{"YCbCr_12bit", ColorModelYCbCr, 12, false, 6},
+		{"YCbCr_16bit", ColorModelYCbCr, 16, false, 6},
+
+		{"Unknown_Default", ColorModelUnknown, 8, false, 4},
+		{"Unknown_16bit", ColorModelUnknown, 16, false, 4},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			info := &ImageInfo{
+				ColorModel: tc.colorModel,
+				BitDepth:   tc.bitDepth,
+				HasAlpha:   tc.hasAlpha,
+			}
+			bpp := calculateBytesPerPixel(info)
+			if bpp != tc.expectedBPP {
+				t.Errorf("Expected %d bytes per pixel, got %d", tc.expectedBPP, bpp)
+			}
+		})
+	}
 }
